@@ -84,8 +84,8 @@ export function SheetUpload({ onProcessed }: SheetUploadProps) {
         </div>
         <CardTitle className="text-xl">Upload Sheet Music</CardTitle>
         <CardDescription>
-          Upload an image of sheet music to convert it into an interactive piano
-          roll
+          Upload an image or PDF of sheet music to convert it into an interactive
+          piano roll
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -144,7 +144,7 @@ export function SheetUpload({ onProcessed }: SheetUploadProps) {
               <Upload className="h-10 w-10 text-muted-foreground" />
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">
-                  Drag &amp; drop an image here, or
+                  Drag &amp; drop a file here, or
                 </p>
                 <Button
                   variant="secondary"
@@ -155,14 +155,14 @@ export function SheetUpload({ onProcessed }: SheetUploadProps) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                PNG, JPG, or TIFF up to 10 MB
+                PNG, JPG, TIFF, or PDF
               </p>
             </>
           )}
           <input
             ref={inputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.pdf,application/pdf"
             className="hidden"
             onChange={handleChange}
           />

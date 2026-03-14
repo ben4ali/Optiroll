@@ -14,6 +14,7 @@ import uuid
 from argparse import Namespace
 from pathlib import Path
 
+import fitz  # PyMuPDF
 import muspy
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,10 +49,31 @@ app.add_middleware(
 UPLOADS_DIR = Path(__file__).parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+# oemer uses module-level global state (layers._layers), so only one
+# processing run can happen at a time.  This lock serialises access.
+_oemer_lock = threading.Lock()
+
+# Allowed MIME types
+_ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/tiff", "image/bmp", "image/webp"}
+_ALLOWED_PDF_TYPES = {"application/pdf"}
+_PDF_RENDER_DPI = 250  # Good balance between quality and speed
+
 
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    # Preload oemer ONNX models so the first request doesn't pay the import +
+    # model-loading cost.  Run in a daemon thread so it doesn't block startup.
+    threading.Thread(target=_preload_oemer, daemon=True).start()
+
+
+def _preload_oemer() -> None:
+    """Import oemer eagerly so ONNX sessions are created once at startup."""
+    try:
+        from oemer import ete as _  # noqa: F401
+        logger.info("oemer models preloaded successfully")
+    except Exception as exc:
+        logger.warning("oemer preload failed (will retry on first request): %s", exc)
 
 
 # Serve uploaded images
@@ -115,23 +137,38 @@ _PHASE_MAP: list[tuple[str, int]] = [
 ]
 
 
-def _estimate_progress(line: str, current_phase_progress: int) -> int:
-    """Parse a log line and return an estimated progress percentage."""
+def _estimate_progress(
+    line: str,
+    current_phase_progress: int,
+    page_base: int = 0,
+    page_span: int = 100,
+) -> int:
+    """Parse a log line and return an estimated progress percentage.
+
+    When processing multiple pages, *page_base* is the progress value at the
+    start of the current page and *page_span* is how many percentage points
+    this page is worth.  All oemer-internal percentages (0-100) are scaled
+    into the [page_base, page_base+page_span] range.
+    """
+    raw = current_phase_progress  # fall-through value
+
     for phrase, pct in _PHASE_MAP:
         if phrase.lower() in line.lower():
-            return pct
+            raw = pct
+            break
+    else:
+        # Neural network progress: "193/240 (step: 16)"
+        m = re.match(r"(\d+)/(\d+)", line)
+        if m:
+            cur, total = int(m.group(1)), int(m.group(2))
+            frac = cur / total if total else 0
+            if current_phase_progress < 50:
+                raw = int(5 + frac * 44)  # 5% → 49%
+            else:
+                raw = int(50 + frac * 34)  # 50% → 84%
 
-    # Neural network progress: "193/240 (step: 16)"
-    m = re.match(r"(\d+)/(\d+)", line)
-    if m:
-        cur, total = int(m.group(1)), int(m.group(2))
-        frac = cur / total if total else 0
-        if current_phase_progress < 50:
-            return int(5 + frac * 44)  # 5% → 49%
-        else:
-            return int(50 + frac * 34)  # 50% → 84%
-
-    return current_phase_progress
+    # Scale into the page's progress window
+    return int(page_base + (raw / 100) * page_span)
 
 
 def _parse_score_to_notes(score: muspy.Music) -> list[dict]:
@@ -167,6 +204,26 @@ def _compute_duration(notes: list[dict]) -> float:
     return max(n["start"] + n["duration"] for n in notes)
 
 
+def _is_pdf(filename: str, content_type: str | None) -> bool:
+    """Check if the upload is a PDF by extension or MIME type."""
+    if content_type and content_type in _ALLOWED_PDF_TYPES:
+        return True
+    return Path(filename).suffix.lower() == ".pdf"
+
+
+def _pdf_to_images(pdf_path: Path, output_dir: Path) -> list[Path]:
+    """Convert each page of a PDF to a PNG image using PyMuPDF."""
+    doc = fitz.open(str(pdf_path))
+    image_paths: list[Path] = []
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(dpi=_PDF_RENDER_DPI)
+        img_path = output_dir / f"page_{i + 1:03d}.png"
+        pix.save(str(img_path))
+        image_paths.append(img_path)
+    doc.close()
+    return image_paths
+
+
 # ---------------------------------------------------------------------------
 # SSE streaming endpoint
 # ---------------------------------------------------------------------------
@@ -178,21 +235,28 @@ def _sse_event(data: dict) -> str:
 
 @app.post("/process-sheet")
 async def process_sheet(file: UploadFile = File(...)):
-    if file.content_type and not file.content_type.startswith("image/"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Expected an image file, got {file.content_type}",
-        )
+    content_type = file.content_type
+    fname = file.filename or "sheet.png"
+
+    # Validate file type
+    is_pdf = _is_pdf(fname, content_type)
+    if not is_pdf:
+        if content_type and content_type not in _ALLOWED_IMAGE_TYPES:
+            # Be lenient: also accept any image/* prefix
+            if not content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Expected an image or PDF file, got {content_type}",
+                )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="piano_vision_"))
-    suffix = Path(file.filename or "sheet.png").suffix or ".png"
-    image_path = tmp_dir / f"input{suffix}"
-    with open(image_path, "wb") as f:
+    suffix = Path(fname).suffix or ".png"
+    input_path = tmp_dir / f"input{suffix}"
+    with open(input_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
     oemer_output_dir = tmp_dir / "oemer_output"
     oemer_output_dir.mkdir()
-    filename = file.filename or "sheet.png"
 
     log_queue: queue.Queue[str] = queue.Queue()
     result: dict = {"notes": None, "error": None}
@@ -212,18 +276,60 @@ async def process_sheet(file: UploadFile = File(...)):
         try:
             from oemer.ete import clear_data, extract
 
-            args = Namespace(
-                img_path=str(image_path),
-                output_path=str(oemer_output_dir),
-                use_tf=False,
-                save_cache=False,
-                without_deskew=False,
-            )
-            clear_data()
-            musicxml_path = extract(args)
+            # Determine the list of images to process
+            if is_pdf:
+                log_queue.put("Converting PDF pages to images...")
+                pages_dir = tmp_dir / "pages"
+                pages_dir.mkdir()
+                image_paths = _pdf_to_images(input_path, pages_dir)
+                log_queue.put(f"PDF has {len(image_paths)} page(s)")
+                skip_deskew = True  # PDFs are already straight
+            else:
+                image_paths = [input_path]
+                skip_deskew = False  # Images might be camera photos
 
-            score = muspy.read(str(musicxml_path))
-            result["notes"] = _parse_score_to_notes(score)
+            total_pages = len(image_paths)
+            all_notes: list[dict] = []
+            time_offset = 0.0
+
+            with _oemer_lock:
+                for page_idx, img_path in enumerate(image_paths):
+                    page_num = page_idx + 1
+                    log_queue.put(
+                        f"Processing page {page_num}/{total_pages}..."
+                    )
+
+                    # Each page gets its own oemer output subdir
+                    page_output = oemer_output_dir / f"page_{page_num:03d}"
+                    page_output.mkdir()
+
+                    args = Namespace(
+                        img_path=str(img_path),
+                        output_path=str(page_output),
+                        use_tf=False,
+                        save_cache=False,
+                        without_deskew=skip_deskew,
+                    )
+                    clear_data()
+                    musicxml_path = extract(args)
+
+                    score = muspy.read(str(musicxml_path))
+                    page_notes = _parse_score_to_notes(score)
+
+                    # Offset this page's notes by the cumulative duration
+                    for n in page_notes:
+                        n["start"] = round(n["start"] + time_offset, 4)
+
+                    page_duration = _compute_duration(page_notes) if page_notes else 0.0
+                    # Add a small gap between pages so they don't overlap
+                    if page_notes:
+                        time_offset = page_duration + 0.5
+
+                    all_notes.extend(page_notes)
+
+            all_notes.sort(key=lambda n: (n["start"], n["pitch"]))
+            result["notes"] = all_notes
+
         except Exception as exc:
             result["error"] = str(exc)
         finally:
@@ -236,6 +342,10 @@ async def process_sheet(file: UploadFile = File(...)):
         thread.start()
 
         progress = 0
+        total_pages = 1  # Will be updated from log messages
+        current_page = 0
+        page_base = 0
+        page_span = 100
 
         yield _sse_event({"type": "log", "message": "Starting OMR processing...", "progress": 0})
 
@@ -243,7 +353,22 @@ async def process_sheet(file: UploadFile = File(...)):
             while not log_queue.empty():
                 try:
                     msg = log_queue.get_nowait()
-                    progress = _estimate_progress(msg, progress)
+
+                    # Detect page count from log messages
+                    m_pages = re.match(r"PDF has (\d+) page", msg)
+                    if m_pages:
+                        total_pages = int(m_pages.group(1))
+                        page_span = 100 // total_pages
+
+                    m_page = re.match(r"Processing page (\d+)/(\d+)", msg)
+                    if m_page:
+                        current_page = int(m_page.group(1))
+                        page_base = (current_page - 1) * page_span
+                        # Reset inner progress for this page
+                        progress = page_base
+
+                    progress = _estimate_progress(msg, progress - page_base, page_base, page_span)
+                    progress = min(progress, 99)  # Don't hit 100 until done
                     yield _sse_event({"type": "log", "message": msg, "progress": progress})
                 except queue.Empty:
                     break
@@ -253,7 +378,8 @@ async def process_sheet(file: UploadFile = File(...)):
         while not log_queue.empty():
             try:
                 msg = log_queue.get_nowait()
-                progress = _estimate_progress(msg, progress)
+                progress = _estimate_progress(msg, progress - page_base, page_base, page_span)
+                progress = min(progress, 99)
                 yield _sse_event({"type": "log", "message": msg, "progress": progress})
             except queue.Empty:
                 break
@@ -264,7 +390,7 @@ async def process_sheet(file: UploadFile = File(...)):
         else:
             notes = result["notes"] or []
             duration = _compute_duration(notes)
-            sheet_id = save_sheet(filename, notes, duration)
+            sheet_id = save_sheet(fname, notes, duration)
             logger.info("Saved sheet %d with %d notes", sheet_id, len(notes))
             yield _sse_event({
                 "type": "done",

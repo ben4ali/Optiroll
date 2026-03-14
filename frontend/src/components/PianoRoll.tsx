@@ -1,5 +1,5 @@
 import type { ColorScheme } from '@/lib/colors';
-import { DEFAULT_COLOR_SCHEME, getDimColors } from '@/lib/colors';
+import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
 import type { HitEffect, NoteData } from '@/lib/types';
 import {
   type Particle,
@@ -19,7 +19,15 @@ const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1;
 const VISIBLE_SECONDS = 6;
 const KEYBOARD_HEIGHT = 80;
 
-const BLACK_KEY_CLASSES = new Set([1, 3, 6, 8, 10]);
+// Pre-compute which pitches are black keys (static lookup)
+const IS_BLACK = new Uint8Array(128);
+for (let p = 0; p < 128; p++) {
+  const cls = p % 12;
+  IS_BLACK[p] = (cls === 1 || cls === 3 || cls === 6 || cls === 8 || cls === 10) ? 1 : 0;
+}
+
+// Reusable typed array for active-pitch tracking (avoids allocation per frame)
+const _activePitches = new Uint8Array(128);
 
 interface PianoRollProps {
   notes: NoteData[];
@@ -28,6 +36,27 @@ interface PianoRollProps {
   colorScheme?: ColorScheme;
   hitEffect?: HitEffect;
   particleIntensity?: number;
+}
+
+// ── Pre-computed color cache ──
+interface ColorCache {
+  key: string;
+  colors: readonly string[];
+  dimColors: string[];
+  rgbColors: [number, number, number][];
+}
+
+function buildColorCache(scheme: ColorScheme): ColorCache {
+  const rgbColors: [number, number, number][] = scheme.colors.map(hex => {
+    const v = parseInt(hex.slice(1, 7), 16);
+    return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+  });
+  return {
+    key: scheme.value,
+    colors: scheme.colors,
+    dimColors: scheme.colors.map(c => c + 'cc'),
+    rgbColors,
+  };
 }
 
 export function PianoRoll({
@@ -39,10 +68,19 @@ export function PianoRoll({
   particleIntensity = 2,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const currentTimeRef = useRef(currentTime);
-  const playingRef = useRef(playing);
   const rafRef = useRef(0);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const drawRef = useRef<() => void>(() => {});
+
+  // ── Mutable refs for props (read inside draw without re-creating effect) ──
+  const currentTimeRef = useRef(currentTime);
+  const playingRef = useRef(playing);
+  const hitEffectRef = useRef(hitEffect);
+  const particleIntensityRef = useRef(particleIntensity);
+  currentTimeRef.current = currentTime;
+  playingRef.current = playing;
+  hitEffectRef.current = hitEffect;
+  particleIntensityRef.current = particleIntensity;
 
   // Particle / ripple pools
   const particlePoolRef = useRef<Particle[]>([]);
@@ -50,15 +88,11 @@ export function PianoRoll({
   const spawnedRef = useRef<Set<number>>(new Set());
   const prevDrawTimeRef = useRef(0);
 
-  currentTimeRef.current = currentTime;
-  playingRef.current = playing;
-
-  const colorSchemeRef = useRef(colorScheme);
-  const hitEffectRef = useRef(hitEffect);
-  const particleIntensityRef = useRef(particleIntensity);
-  colorSchemeRef.current = colorScheme;
-  hitEffectRef.current = hitEffect;
-  particleIntensityRef.current = particleIntensity;
+  // Color cache — rebuilt only when scheme identity changes
+  const colorCacheRef = useRef<ColorCache>(buildColorCache(colorScheme));
+  if (colorCacheRef.current.key !== colorScheme.value) {
+    colorCacheRef.current = buildColorCache(colorScheme);
+  }
 
   // Sort notes once for binary search
   const sorted = useMemo(() => {
@@ -70,7 +104,14 @@ export function PianoRoll({
   const sortedRef = useRef(sorted);
   sortedRef.current = sorted;
 
-  // Reset on note change
+  // Pre-compute end times in a Float64Array (avoids addition in hot loop)
+  const endTimes = useMemo(() => {
+    return new Float64Array(sorted.map(n => n.start + n.duration));
+  }, [sorted]);
+  const endTimesRef = useRef(endTimes);
+  endTimesRef.current = endTimes;
+
+  // Reset effects on note change
   useEffect(() => {
     spawnedRef.current.clear();
     particlePoolRef.current.length = 0;
@@ -78,6 +119,7 @@ export function PianoRoll({
     prevDrawTimeRef.current = 0;
   }, [sorted]);
 
+  // ── Main draw loop setup — only re-created when sorted notes change ──
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -97,9 +139,17 @@ export function PianoRoll({
       return dpr;
     };
 
-    const ro = new ResizeObserver(() => syncSize());
+    const ro = new ResizeObserver(() => {
+      syncSize();
+      // Redraw static frame on resize while paused
+      if (!playingRef.current) drawRef.current();
+    });
     ro.observe(canvas);
     syncSize();
+
+    // Pre-cached grid line x-positions
+    let cachedGridW = 0;
+    let gridXs: number[] = [];
 
     const draw = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -127,28 +177,35 @@ export function PianoRoll({
       const hitLineY = kbY;
       const pxPerSecond = hitLineY / VISIBLE_SECONDS;
 
-      const scheme = colorSchemeRef.current;
-      const colors = scheme.colors;
-      const dimColors = getDimColors(scheme);
+      const cc = colorCacheRef.current;
+      const colors = cc.colors;
+      const dimColors = cc.dimColors;
+      const rgbColors = cc.rgbColors;
       const effect = hitEffectRef.current;
 
-      // Background — dark purple-blue
+      // ── Background ──
       ctx.fillStyle = '#0c0a1a';
       ctx.fillRect(0, 0, w, h);
 
-      // Grid lines
+      // ── Grid lines — batched single path ──
+      if (w !== cachedGridW) {
+        cachedGridW = w;
+        gridXs = [];
+        for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+          if (IS_BLACK[p]) continue;
+          gridXs.push((p - MIN_PITCH) * colWidth);
+        }
+      }
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(255,255,255,0.04)';
       ctx.lineWidth = 1;
-      for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
-        if (BLACK_KEY_CLASSES.has(p % 12)) continue;
-        const x = (p - MIN_PITCH) * colWidth;
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, hitLineY);
+      for (let g = 0; g < gridXs.length; g++) {
+        ctx.moveTo(gridXs[g], 0);
+        ctx.lineTo(gridXs[g], hitLineY);
       }
       ctx.stroke();
 
-      // Hit line
+      // ── Hit line ──
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(255,255,255,0.3)';
       ctx.lineWidth = 2;
@@ -156,20 +213,23 @@ export function PianoRoll({
       ctx.lineTo(w, hitLineY);
       ctx.stroke();
 
-      // Binary search for visible window
+      // ── Binary search for visible window ──
       const visibleStart = t - 0.5;
       const visibleEnd = t + VISIBLE_SECONDS + 0.5;
       const arr = sortedRef.current;
+      const ends = endTimesRef.current;
+      const arrLen = arr.length;
 
       let lo = 0;
-      let hi = arr.length;
+      let hi = arrLen;
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
-        if (arr[mid].start + arr[mid].duration < visibleStart) lo = mid + 1;
+        if (ends[mid] < visibleStart) lo = mid + 1;
         else hi = mid;
       }
 
-      const activePitches = new Uint8Array(128);
+      // Reset active pitches (zero-fill is very fast on typed arrays)
+      _activePitches.fill(0);
 
       // Clip to rolling area
       ctx.save();
@@ -177,13 +237,18 @@ export function PianoRoll({
       ctx.rect(0, 0, w, hitLineY);
       ctx.clip();
 
-      // Draw falling notes
-      for (let i = lo; i < arr.length; i++) {
+      // ── Draw falling notes ──
+      let lastFill = '';
+      const radius = Math.min(4, (colWidth - 2) / 2);
+      const useRoundRect = colWidth >= 8;
+
+      for (let i = lo; i < arrLen; i++) {
         const note = arr[i];
         if (note.start > visibleEnd) break;
 
+        const end = ends[i];
         const noteTopTime = note.start - t;
-        const noteBotTime = note.start + note.duration - t;
+        const noteBotTime = end - t;
         const noteTopY = hitLineY - noteTopTime * pxPerSecond;
         const noteBotY = hitLineY - noteBotTime * pxPerSecond;
 
@@ -193,36 +258,46 @@ export function PianoRoll({
         const barWidth = colWidth - 2;
         const barHeight = noteTopY - noteBotY;
         const pc = note.pitch % 12;
-        const active = t >= note.start && t < note.start + note.duration;
+        const active = t >= note.start && t < end;
 
+        let fill: string;
         if (active) {
-          activePitches[note.pitch] = pc + 1;
-          ctx.fillStyle = colors[pc];
+          _activePitches[note.pitch] = pc + 1;
+          fill = colors[pc];
 
           // Spawn effects on note onset
           if (!spawnedRef.current.has(i)) {
             spawnedRef.current.add(i);
-            const cx = x + colWidth / 2;
             if (effect === 'particles') {
               spawnParticles(
                 particlePoolRef.current,
-                cx,
+                x + colWidth / 2,
                 hitLineY,
-                colors[pc],
+                fill,
                 particleIntensityRef.current,
               );
             } else if (effect === 'ripple') {
-              spawnRipple(ripplePoolRef.current, cx, hitLineY, colors[pc]);
+              spawnRipple(ripplePoolRef.current, x + colWidth / 2, hitLineY, fill);
             }
           }
         } else {
-          ctx.fillStyle = dimColors[pc];
+          fill = dimColors[pc];
         }
 
-        const radius = Math.min(4, barWidth / 2);
-        ctx.beginPath();
-        ctx.roundRect(x + 1, noteBotY, barWidth, barHeight, radius);
-        ctx.fill();
+        // Only change fillStyle when color differs (GPU state change is costly)
+        if (fill !== lastFill) {
+          ctx.fillStyle = fill;
+          lastFill = fill;
+        }
+
+        // Plain fillRect for small bars; roundRect for large
+        if (!useRoundRect || barHeight < 8) {
+          ctx.fillRect(x + 1, noteBotY, barWidth, barHeight);
+        } else {
+          ctx.beginPath();
+          ctx.roundRect(x + 1, noteBotY, barWidth, barHeight, radius);
+          ctx.fill();
+        }
       }
 
       ctx.restore(); // remove clip
@@ -234,98 +309,119 @@ export function PianoRoll({
       ctx.fillStyle = '#0f0d1e';
       ctx.fillRect(0, kbY, w, kbH);
 
+      // White keys (fills)
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
-        if (BLACK_KEY_CLASSES.has(p % 12)) continue;
+        if (IS_BLACK[p]) continue;
         const x = (p - MIN_PITCH) * colWidth;
-        const ap = activePitches[p];
+        const ap = _activePitches[p];
         ctx.fillStyle = ap ? colors[ap - 1] : '#e8e8e8';
         ctx.fillRect(x + 0.5, kbY, colWidth - 1, kbH - 1);
-        ctx.strokeStyle = '#888';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(x + 0.5, kbY, colWidth - 1, kbH - 1);
       }
 
+      // White key borders — batched single stroke
+      ctx.beginPath();
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 0.5;
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
-        if (!BLACK_KEY_CLASSES.has(p % 12)) continue;
+        if (IS_BLACK[p]) continue;
+        const x = (p - MIN_PITCH) * colWidth;
+        ctx.rect(x + 0.5, kbY, colWidth - 1, kbH - 1);
+      }
+      ctx.stroke();
+
+      // Black keys (fills)
+      for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+        if (!IS_BLACK[p]) continue;
         const x = (p - MIN_PITCH) * colWidth;
         const bw = colWidth * 0.7;
         const bx = x + (colWidth - bw) / 2;
-        const ap = activePitches[p];
+        const ap = _activePitches[p];
         ctx.fillStyle = ap ? colors[ap - 1] : '#1a1628';
         ctx.fillRect(bx, kbY, bw, blackKeyH);
-        ctx.strokeStyle = ap ? 'rgba(255,255,255,0.3)' : '#333';
-        ctx.lineWidth = 0.5;
+      }
+
+      // Black key borders — batched
+      ctx.beginPath();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 0.5;
+      for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+        if (!IS_BLACK[p]) continue;
+        const bw = colWidth * 0.7;
+        const bx = (p - MIN_PITCH) * colWidth + (colWidth - bw) / 2;
+        ctx.rect(bx, kbY, bw, blackKeyH);
+      }
+      ctx.stroke();
+
+      // Active black key highlight borders
+      for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+        if (!IS_BLACK[p] || !_activePitches[p]) continue;
+        const bw = colWidth * 0.7;
+        const bx = (p - MIN_PITCH) * colWidth + (colWidth - bw) / 2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.strokeRect(bx, kbY, bw, blackKeyH);
       }
 
+      // C labels
       ctx.font = '9px system-ui, sans-serif';
       ctx.textAlign = 'center';
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
         if (p % 12 !== 0) continue;
         const x = (p - MIN_PITCH) * colWidth + colWidth / 2;
         const octave = Math.floor(p / 12) - 1;
-        ctx.fillStyle = activePitches[p]
-          ? 'rgba(0,0,0,0.7)'
-          : 'rgba(0,0,0,0.4)';
+        ctx.fillStyle = _activePitches[p] ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.4)';
         ctx.fillText(`C${octave}`, x, kbY + kbH - 6);
       }
 
-      // ── Hit effects (drawn AFTER keyboard using shadowBlur for reliable glow) ──
-      ctx.globalCompositeOperation = 'source-over';
+      // ── Hit effects — NO shadowBlur (massively expensive). Use additive blending. ──
 
-      if (effect === 'glow' || effect === 'none') {
-        // Glow: draw bright rectangles with shadowBlur for bloom
-        if (effect === 'glow') {
-          ctx.save();
-          ctx.shadowBlur = 25;
-          for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
-            if (!activePitches[p]) continue;
-            const color = colors[activePitches[p] - 1];
-            const x = (p - MIN_PITCH) * colWidth;
-            ctx.shadowColor = color;
-            ctx.fillStyle = color;
-            ctx.fillRect(x, hitLineY - 6, colWidth, 6);
-          }
-          ctx.restore();
+      if (effect === 'glow') {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+          if (!_activePitches[p]) continue;
+          const [r, g, b] = rgbColors[_activePitches[p] - 1];
+          const x = (p - MIN_PITCH) * colWidth;
+          // Bright inner glow
+          ctx.fillStyle = `rgba(${r},${g},${b},0.6)`;
+          ctx.fillRect(x, hitLineY - 5, colWidth, 5);
+          // Softer outer bloom
+          ctx.fillStyle = `rgba(${r},${g},${b},0.15)`;
+          ctx.fillRect(x - 4, hitLineY - 18, colWidth + 8, 18);
         }
+        ctx.globalCompositeOperation = 'source-over';
       }
 
       if (effect === 'particles') {
-        // Particles: draw with shadowBlur for glow around each particle
         updateParticles(particlePoolRef.current);
-        if (particlePoolRef.current.length > 0) {
-          ctx.save();
-          ctx.shadowBlur = 8;
-          for (const p of particlePoolRef.current) {
-            const alpha = Math.min(1, (p.life / p.maxLife) * 1.4);
-            const col = `rgba(${p.r},${p.g},${p.b},${alpha.toFixed(3)})`;
-            ctx.shadowColor = `rgb(${p.r},${p.g},${p.b})`;
-            ctx.fillStyle = col;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
+        const pool = particlePoolRef.current;
+        if (pool.length > 0) {
+          ctx.globalCompositeOperation = 'lighter';
+          for (let i = 0; i < pool.length; i++) {
+            const pt = pool[i];
+            const alpha = Math.min(1, (pt.life / pt.maxLife) * 1.4);
+            ctx.fillStyle = `rgba(${pt.r},${pt.g},${pt.b},${alpha.toFixed(2)})`;
+            // Use fillRect instead of arc for particles (much faster, no beginPath/arc)
+            const s = pt.size;
+            ctx.fillRect(pt.x - s, pt.y - s, s * 2, s * 2);
           }
-          ctx.restore();
+          ctx.globalCompositeOperation = 'source-over';
         }
       }
 
       if (effect === 'ripple') {
-        // Ripples: expanding rings with shadowBlur
         updateRipples(ripplePoolRef.current);
-        if (ripplePoolRef.current.length > 0) {
-          ctx.save();
-          ctx.shadowBlur = 10;
-          for (const r of ripplePoolRef.current) {
-            const alpha = (r.life / r.maxLife) * 0.8;
-            const col = `rgba(${r.r},${r.g},${r.b},${alpha.toFixed(3)})`;
-            ctx.shadowColor = `rgb(${r.r},${r.g},${r.b})`;
-            ctx.strokeStyle = col;
-            ctx.lineWidth = 3;
+        const pool = ripplePoolRef.current;
+        if (pool.length > 0) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.lineWidth = 2;
+          for (let i = 0; i < pool.length; i++) {
+            const rp = pool[i];
+            const alpha = (rp.life / rp.maxLife) * 0.7;
+            ctx.strokeStyle = `rgba(${rp.r},${rp.g},${rp.b},${alpha.toFixed(2)})`;
             ctx.beginPath();
-            ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
+            ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI * 2);
             ctx.stroke();
           }
-          ctx.restore();
+          ctx.globalCompositeOperation = 'source-over';
         }
       }
 
@@ -334,16 +430,34 @@ export function PianoRoll({
       }
     };
 
+    // Store draw in ref so external effects can trigger it
+    drawRef.current = draw;
+
+    // Initial draw
     draw();
-    if (playing) {
-      rafRef.current = requestAnimationFrame(draw);
-    }
 
     return () => {
       cancelAnimationFrame(rafRef.current);
       ro.disconnect();
     };
-  }, [playing, currentTime, sorted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorted]);
+
+  // When playing toggles on, kick the rAF loop
+  useEffect(() => {
+    if (playing) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(drawRef.current);
+    }
+  }, [playing]);
+
+  // Redraw static frame when paused and currentTime changes (scrubbing)
+  useEffect(() => {
+    if (!playing) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => drawRef.current());
+    }
+  }, [playing, currentTime]);
 
   return (
     <canvas
