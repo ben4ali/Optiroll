@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import uuid
 from argparse import Namespace
 from pathlib import Path
 
@@ -17,8 +18,19 @@ import muspy
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from database import delete_sheet, get_all_sheets, get_sheet_notes, init_db, save_sheet
+from database import (
+    delete_sheet,
+    get_all_sheets,
+    get_sheet,
+    get_sheet_notes,
+    init_db,
+    save_sheet,
+    set_sheet_image,
+    update_sheet,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("piano_vision")
@@ -33,10 +45,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+UPLOADS_DIR = Path(__file__).parent / "uploads"
+UPLOADS_DIR.mkdir(exist_ok=True)
+
 
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+
+
+# Serve uploaded images
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +161,12 @@ def _parse_score_to_notes(score: muspy.Music) -> list[dict]:
     return notes
 
 
+def _compute_duration(notes: list[dict]) -> float:
+    if not notes:
+        return 0.0
+    return max(n["start"] + n["duration"] for n in notes)
+
+
 # ---------------------------------------------------------------------------
 # SSE streaming endpoint
 # ---------------------------------------------------------------------------
@@ -238,7 +263,8 @@ async def process_sheet(file: UploadFile = File(...)):
             yield _sse_event({"type": "error", "message": result["error"], "progress": progress})
         else:
             notes = result["notes"] or []
-            sheet_id = save_sheet(filename, notes)
+            duration = _compute_duration(notes)
+            sheet_id = save_sheet(filename, notes, duration)
             logger.info("Saved sheet %d with %d notes", sheet_id, len(notes))
             yield _sse_event({
                 "type": "done",
@@ -264,11 +290,11 @@ async def list_sheets():
 
 
 @app.get("/sheets/{sheet_id}")
-async def get_sheet(sheet_id: int):
-    notes = get_sheet_notes(sheet_id)
-    if notes is None:
+async def get_sheet_endpoint(sheet_id: int):
+    data = get_sheet(sheet_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="Sheet not found")
-    return notes
+    return data
 
 
 @app.delete("/sheets/{sheet_id}")
@@ -276,3 +302,30 @@ async def remove_sheet(sheet_id: int):
     if not delete_sheet(sheet_id):
         raise HTTPException(status_code=404, detail="Sheet not found")
     return {"ok": True}
+
+
+class SheetUpdate(BaseModel):
+    name: str | None = None
+    author: str | None = None
+
+
+@app.patch("/sheets/{sheet_id}")
+async def patch_sheet(sheet_id: int, body: SheetUpdate):
+    if not update_sheet(sheet_id, name=body.name, author=body.author):
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    return {"ok": True}
+
+
+@app.post("/sheets/{sheet_id}/image")
+async def upload_sheet_image(sheet_id: int, file: UploadFile = File(...)):
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Expected an image file")
+
+    ext = Path(file.filename or "image.jpg").suffix or ".jpg"
+    unique_name = f"{sheet_id}_{uuid.uuid4().hex[:8]}{ext}"
+    dest = UPLOADS_DIR / unique_name
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    set_sheet_image(sheet_id, unique_name)
+    return {"ok": True, "image_filename": unique_name}

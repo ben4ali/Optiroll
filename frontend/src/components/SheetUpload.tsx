@@ -7,7 +7,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { processSheetWithProgress } from '@/lib/api';
-import type { NoteData, SSEEvent } from '@/lib/types';
+import type { SSEEvent } from '@/lib/types';
 import {
   ChevronDown,
   ChevronUp,
@@ -18,10 +18,10 @@ import {
 import { useCallback, useRef, useState } from 'react';
 
 interface SheetUploadProps {
-  onNotesLoaded: (notes: NoteData[]) => void;
+  onProcessed: (sheetId: number) => void;
 }
 
-export function SheetUpload({ onNotesLoaded }: SheetUploadProps) {
+export function SheetUpload({ onProcessed }: SheetUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -51,15 +51,15 @@ export function SheetUpload({ onNotesLoaded }: SheetUploadProps) {
       setLogs([]);
       setLogsOpen(false);
       try {
-        const notes = await processSheetWithProgress(file, handleEvent);
-        onNotesLoaded(notes);
+        const { sheetId } = await processSheetWithProgress(file, handleEvent);
+        onProcessed(sheetId);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong');
       } finally {
         setUploading(false);
       }
     },
-    [onNotesLoaded, handleEvent],
+    [onProcessed, handleEvent],
   );
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

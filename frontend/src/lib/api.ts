@@ -1,4 +1,4 @@
-import type { NoteData, SSEEvent, Sheet } from './types';
+import type { NoteData, SSEEvent, Sheet, SheetDetail } from './types';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
@@ -9,7 +9,7 @@ const API_BASE = import.meta.env.VITE_API_URL ?? '';
 export async function processSheetWithProgress(
   file: File,
   onEvent: (event: SSEEvent) => void,
-): Promise<NoteData[]> {
+): Promise<{ notes: NoteData[]; sheetId: number }> {
   const formData = new FormData();
   formData.append('file', file);
 
@@ -27,6 +27,7 @@ export async function processSheetWithProgress(
   const decoder = new TextDecoder();
   let buffer = '';
   let notes: NoteData[] = [];
+  let sheetId = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -43,6 +44,7 @@ export async function processSheetWithProgress(
       onEvent(data);
       if (data.type === 'done') {
         notes = data.notes;
+        sheetId = data.sheetId;
       }
       if (data.type === 'error') {
         throw new Error(data.message);
@@ -50,7 +52,7 @@ export async function processSheetWithProgress(
     }
   }
 
-  return notes;
+  return { notes, sheetId };
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ export async function fetchSheets(): Promise<Sheet[]> {
   return res.json();
 }
 
-export async function fetchSheetNotes(sheetId: number): Promise<NoteData[]> {
+export async function fetchSheet(sheetId: number): Promise<SheetDetail> {
   const res = await fetch(`${API_BASE}/sheets/${sheetId}`);
   if (!res.ok) throw new Error('Sheet not found');
   return res.json();
@@ -72,4 +74,31 @@ export async function fetchSheetNotes(sheetId: number): Promise<NoteData[]> {
 export async function deleteSheetById(sheetId: number): Promise<void> {
   const res = await fetch(`${API_BASE}/sheets/${sheetId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete sheet');
+}
+
+export async function updateSheet(
+  sheetId: number,
+  data: { name?: string; author?: string },
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/sheets/${sheetId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update sheet');
+}
+
+export async function uploadSheetImage(
+  sheetId: number,
+  file: File,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${API_BASE}/sheets/${sheetId}/image`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error('Failed to upload image');
+  const data = await res.json();
+  return data.image_filename;
 }
