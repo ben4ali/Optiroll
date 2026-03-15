@@ -2,6 +2,15 @@
 
 A full-stack web application that converts sheet music images into interactive, playable piano rolls using Optical Music Recognition (OMR).
 
+## Preview
+
+|                                                                          |                                                                      |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| ![Home page](previews/gr2.png)                                           | ![Studio page](previews/gr1.png)                                     |
+| **Home**, Landing page with particle text, light rays, and song carousel | **Studio**, Upload sheet music and browse your library               |
+| ![Piano roll - Cool Blues](previews/gr3.png)                             | ![Piano roll - Warm Sunset](previews/gr4.png)                        |
+| **Player**, Cool Blues palette with particle hit effects and duet mode   | **Player**, Warm Sunset palette with ripple hit effects and humanize |
+
 ## How It Works
 
 1. **Upload** — Drop an image (PNG, JPG, TIFF) or a multi-page PDF of standard sheet music into the upload zone.
