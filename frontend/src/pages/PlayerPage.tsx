@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { ControlSidebar, TransportOverlay } from '@/components/ControlBar';
 import { PianoRoll } from '@/components/PianoRoll';
 import { usePianoPlayer } from '@/hooks/usePianoPlayer';
@@ -5,7 +6,7 @@ import { fetchSheet } from '@/lib/api';
 import type { ColorScheme } from '@/lib/colors';
 import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
 import type { HitEffect, NoteData } from '@/lib/types';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 
@@ -23,7 +24,7 @@ export function PlayerPage() {
   const [particleIntensity, setParticleIntensity] = useState(2);
 
   // Sidebar
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     if (!sheetId) return;
@@ -67,7 +68,7 @@ export function PlayerPage() {
   if (loadingSheet) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#3b82f6]/50" />
       </div>
     );
   }
@@ -75,21 +76,35 @@ export function PlayerPage() {
   if (loadError) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-destructive-foreground">{loadError}</p>
+        <p className="text-red-400">{loadError}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden relative">
       {/* Main area: PianoRoll + floating transport */}
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Sheet title */}
         {sheetName && (
           <div className="absolute top-3 left-4 z-10">
-            <span className="text-xs font-medium text-muted-foreground/70 bg-card/70 backdrop-blur px-2 py-1 rounded">
+            <span className="text-xs font-medium text-white/50 bg-[#141735]/90 backdrop-blur-sm border border-white/10 px-3 py-1 rounded-md">
               {sheetName}
             </span>
+          </div>
+        )}
+
+        {/* Settings button — visible when sidebar is closed */}
+        {!sidebarOpen && (
+          <div className="absolute top-3 right-4 z-10">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-white/40 hover:text-white/70 hover:bg-white/[0.08] bg-[#141735]/90 backdrop-blur-sm border border-white/10 rounded-md"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Settings2 className="h-4 w-4" />
+            </Button>
           </div>
         )}
 
@@ -118,7 +133,7 @@ export function PlayerPage() {
         />
       </div>
 
-      {/* Right sidebar (always rendered — has persistent toggle strip) */}
+      {/* Right sidebar — absolutely positioned, overlays canvas */}
       <ControlSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen(o => !o)}
@@ -127,6 +142,7 @@ export function PlayerPage() {
         reverbMix={player.reverbMix}
         humanize={player.humanize}
         octave={player.octave}
+        transpose={player.transpose}
         colorScheme={colorScheme}
         hitEffect={hitEffect}
         particleIntensity={particleIntensity}
@@ -140,6 +156,7 @@ export function PlayerPage() {
         onReverbMixChange={player.setReverbMix}
         onHumanizeChange={player.setHumanize}
         onOctaveChange={player.setOctave}
+        onTransposeChange={player.setTranspose}
         onColorSchemeChange={handleColorSchemeChange}
         onHitEffectChange={handleHitEffectChange}
         onParticleIntensityChange={handleParticleIntensityChange}

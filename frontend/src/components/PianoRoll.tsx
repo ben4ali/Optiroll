@@ -1,6 +1,5 @@
 import type { ColorScheme } from '@/lib/colors';
 import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
-import type { HitEffect, NoteData } from '@/lib/types';
 import {
   type Particle,
   type Ripple,
@@ -9,6 +8,7 @@ import {
   updateParticles,
   updateRipples,
 } from '@/lib/particles';
+import type { HitEffect, NoteData } from '@/lib/types';
 import { useEffect, useMemo, useRef } from 'react';
 
 // MIDI range: 21 (A0) through 108 (C8) = 88 keys
@@ -17,13 +17,14 @@ const MAX_PITCH = 108;
 const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1;
 
 const VISIBLE_SECONDS = 6;
-const KEYBOARD_HEIGHT = 80;
+const KEYBOARD_HEIGHT = 120;
 
 // Pre-compute which pitches are black keys (static lookup)
 const IS_BLACK = new Uint8Array(128);
 for (let p = 0; p < 128; p++) {
   const cls = p % 12;
-  IS_BLACK[p] = (cls === 1 || cls === 3 || cls === 6 || cls === 8 || cls === 10) ? 1 : 0;
+  IS_BLACK[p] =
+    cls === 1 || cls === 3 || cls === 6 || cls === 8 || cls === 10 ? 1 : 0;
 }
 
 // Reusable typed array for active-pitch tracking (avoids allocation per frame)
@@ -119,6 +120,9 @@ export function PianoRoll({
     prevDrawTimeRef.current = 0;
   }, [sorted]);
 
+  // Glare phase — animated continuously
+  const glarePhaseRef = useRef(0);
+
   // ── Main draw loop setup — only re-created when sorted notes change ──
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -165,6 +169,10 @@ export function PianoRoll({
       const t = currentTimeRef.current;
       const colWidth = w / PITCH_RANGE;
 
+      // Advance glare animation phase
+      glarePhaseRef.current = (glarePhaseRef.current + 0.008) % 1;
+      const glarePhase = glarePhaseRef.current;
+
       // Detect rewind — reset effects
       if (t < prevDrawTimeRef.current - 0.5) {
         spawnedRef.current.clear();
@@ -184,7 +192,7 @@ export function PianoRoll({
       const effect = hitEffectRef.current;
 
       // ── Background ──
-      ctx.fillStyle = '#0c0a1a';
+      ctx.fillStyle = '#0c0e1f';
       ctx.fillRect(0, 0, w, h);
 
       // ── Grid lines — batched single path ──
@@ -237,8 +245,7 @@ export function PianoRoll({
       ctx.rect(0, 0, w, hitLineY);
       ctx.clip();
 
-      // ── Draw falling notes ──
-      let lastFill = '';
+      // ── Draw falling notes (glassmorphism bars) ──
       const radius = Math.min(4, (colWidth - 2) / 2);
       const useRoundRect = colWidth >= 8;
 
@@ -255,15 +262,15 @@ export function PianoRoll({
         if (noteTopY < -20 || noteBotY > hitLineY + 20) continue;
 
         const x = (note.pitch - MIN_PITCH) * colWidth;
+        const barX = x + 1;
         const barWidth = colWidth - 2;
         const barHeight = noteTopY - noteBotY;
         const pc = note.pitch % 12;
         const active = t >= note.start && t < end;
+        const [r, g, b] = rgbColors[pc];
 
-        let fill: string;
         if (active) {
           _activePitches[note.pitch] = pc + 1;
-          fill = colors[pc];
 
           // Spawn effects on note onset
           if (!spawnedRef.current.has(i)) {
@@ -273,31 +280,84 @@ export function PianoRoll({
                 particlePoolRef.current,
                 x + colWidth / 2,
                 hitLineY,
-                fill,
+                colors[pc],
                 particleIntensityRef.current,
               );
             } else if (effect === 'ripple') {
-              spawnRipple(ripplePoolRef.current, x + colWidth / 2, hitLineY, fill);
+              spawnRipple(
+                ripplePoolRef.current,
+                x + colWidth / 2,
+                hitLineY,
+                colors[pc],
+              );
             }
           }
-        } else {
-          fill = dimColors[pc];
         }
 
-        // Only change fillStyle when color differs (GPU state change is costly)
-        if (fill !== lastFill) {
-          ctx.fillStyle = fill;
-          lastFill = fill;
-        }
-
-        // Plain fillRect for small bars; roundRect for large
+        // ── Glass bar fill — full opacity always ──
+        ctx.fillStyle = colors[pc];
         if (!useRoundRect || barHeight < 8) {
-          ctx.fillRect(x + 1, noteBotY, barWidth, barHeight);
+          ctx.fillRect(barX, noteBotY, barWidth, barHeight);
         } else {
           ctx.beginPath();
-          ctx.roundRect(x + 1, noteBotY, barWidth, barHeight, radius);
+          ctx.roundRect(barX, noteBotY, barWidth, barHeight, radius);
           ctx.fill();
         }
+
+        // ── Brightness boost when active (additive white overlay) ──
+        if (active) {
+          ctx.fillStyle = 'rgba(255,255,255,0.2)';
+          if (!useRoundRect || barHeight < 8) {
+            ctx.fillRect(barX, noteBotY, barWidth, barHeight);
+          } else {
+            ctx.beginPath();
+            ctx.roundRect(barX, noteBotY, barWidth, barHeight, radius);
+            ctx.fill();
+          }
+        }
+
+        // ── Brighter left edge (light hitting the glass) ──
+        ctx.fillStyle = `rgba(255,255,255,${active ? 0.3 : 0.15})`;
+        ctx.fillRect(barX, noteBotY, 1.5, barHeight);
+
+        // ── Top edge highlight ──
+        ctx.fillStyle = `rgba(255,255,255,${active ? 0.2 : 0.08})`;
+        ctx.fillRect(barX, noteBotY, barWidth, 1.5);
+
+        // ── Diagonal glare sweep ──
+        if (barHeight > 12 && barWidth > 4) {
+          const phase = (glarePhase + i * 0.037) % 1;
+          // The glare band travels diagonally from bottom-left to top-right
+          const travelRange = barHeight + barWidth;
+          const glarePos = phase * travelRange;
+          const bandW = Math.min(barWidth * 0.5, 14);
+
+          ctx.save();
+          ctx.beginPath();
+          if (useRoundRect) {
+            ctx.roundRect(barX, noteBotY, barWidth, barHeight, radius);
+          } else {
+            ctx.rect(barX, noteBotY, barWidth, barHeight);
+          }
+          ctx.clip();
+
+          // Draw a diagonal band: rotated ~30deg rectangle
+          const cx = barX + glarePos - barHeight * 0.3;
+          const cy = noteBotY + barHeight - glarePos * 0.6;
+          ctx.translate(cx, cy);
+          ctx.rotate(-0.55);
+          const grd = ctx.createLinearGradient(0, 0, bandW, 0);
+          grd.addColorStop(0, 'rgba(255,255,255,0)');
+          grd.addColorStop(0.5, `rgba(255,255,255,${active ? 0.22 : 0.09})`);
+          grd.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = grd;
+          ctx.fillRect(0, -barHeight * 2, bandW, barHeight * 4);
+          ctx.restore();
+        }
+
+        // ── Thin right edge for depth ──
+        ctx.fillStyle = `rgba(255,255,255,${active ? 0.1 : 0.05})`;
+        ctx.fillRect(barX + barWidth - 1, noteBotY, 1, barHeight);
       }
 
       ctx.restore(); // remove clip
@@ -306,16 +366,16 @@ export function PianoRoll({
       const kbH = KEYBOARD_HEIGHT;
       const blackKeyH = kbH * 0.6;
 
-      ctx.fillStyle = '#0f0d1e';
+      ctx.fillStyle = '#0d0f20';
       ctx.fillRect(0, kbY, w, kbH);
 
       // White keys (fills)
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
         if (IS_BLACK[p]) continue;
-        const x = (p - MIN_PITCH) * colWidth;
+        const kx = (p - MIN_PITCH) * colWidth;
         const ap = _activePitches[p];
         ctx.fillStyle = ap ? colors[ap - 1] : '#e8e8e8';
-        ctx.fillRect(x + 0.5, kbY, colWidth - 1, kbH - 1);
+        ctx.fillRect(kx + 0.5, kbY, colWidth - 1, kbH - 1);
       }
 
       // White key borders — batched single stroke
@@ -324,17 +384,17 @@ export function PianoRoll({
       ctx.lineWidth = 0.5;
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
         if (IS_BLACK[p]) continue;
-        const x = (p - MIN_PITCH) * colWidth;
-        ctx.rect(x + 0.5, kbY, colWidth - 1, kbH - 1);
+        const kx = (p - MIN_PITCH) * colWidth;
+        ctx.rect(kx + 0.5, kbY, colWidth - 1, kbH - 1);
       }
       ctx.stroke();
 
       // Black keys (fills)
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
         if (!IS_BLACK[p]) continue;
-        const x = (p - MIN_PITCH) * colWidth;
+        const kx = (p - MIN_PITCH) * colWidth;
         const bw = colWidth * 0.7;
-        const bx = x + (colWidth - bw) / 2;
+        const bx = kx + (colWidth - bw) / 2;
         const ap = _activePitches[p];
         ctx.fillStyle = ap ? colors[ap - 1] : '#1a1628';
         ctx.fillRect(bx, kbY, bw, blackKeyH);
@@ -366,10 +426,12 @@ export function PianoRoll({
       ctx.textAlign = 'center';
       for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
         if (p % 12 !== 0) continue;
-        const x = (p - MIN_PITCH) * colWidth + colWidth / 2;
+        const kx = (p - MIN_PITCH) * colWidth + colWidth / 2;
         const octave = Math.floor(p / 12) - 1;
-        ctx.fillStyle = _activePitches[p] ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.4)';
-        ctx.fillText(`C${octave}`, x, kbY + kbH - 6);
+        ctx.fillStyle = _activePitches[p]
+          ? 'rgba(0,0,0,0.7)'
+          : 'rgba(0,0,0,0.4)';
+        ctx.fillText(`C${octave}`, kx, kbY + kbH - 6);
       }
 
       // ── Hit effects — NO shadowBlur (massively expensive). Use additive blending. ──
@@ -378,14 +440,14 @@ export function PianoRoll({
         ctx.globalCompositeOperation = 'lighter';
         for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
           if (!_activePitches[p]) continue;
-          const [r, g, b] = rgbColors[_activePitches[p] - 1];
-          const x = (p - MIN_PITCH) * colWidth;
+          const [cr, cg, cb] = rgbColors[_activePitches[p] - 1];
+          const gx = (p - MIN_PITCH) * colWidth;
           // Bright inner glow
-          ctx.fillStyle = `rgba(${r},${g},${b},0.6)`;
-          ctx.fillRect(x, hitLineY - 5, colWidth, 5);
+          ctx.fillStyle = `rgba(${cr},${cg},${cb},0.6)`;
+          ctx.fillRect(gx, hitLineY - 5, colWidth, 5);
           // Softer outer bloom
-          ctx.fillStyle = `rgba(${r},${g},${b},0.15)`;
-          ctx.fillRect(x - 4, hitLineY - 18, colWidth + 8, 18);
+          ctx.fillStyle = `rgba(${cr},${cg},${cb},0.15)`;
+          ctx.fillRect(gx - 4, hitLineY - 18, colWidth + 8, 18);
         }
         ctx.globalCompositeOperation = 'source-over';
       }
@@ -395,10 +457,10 @@ export function PianoRoll({
         const pool = particlePoolRef.current;
         if (pool.length > 0) {
           ctx.globalCompositeOperation = 'lighter';
-          for (let i = 0; i < pool.length; i++) {
-            const pt = pool[i];
-            const alpha = Math.min(1, (pt.life / pt.maxLife) * 1.4);
-            ctx.fillStyle = `rgba(${pt.r},${pt.g},${pt.b},${alpha.toFixed(2)})`;
+          for (let j = 0; j < pool.length; j++) {
+            const pt = pool[j];
+            const pa = Math.min(1, (pt.life / pt.maxLife) * 1.4);
+            ctx.fillStyle = `rgba(${pt.r},${pt.g},${pt.b},${pa.toFixed(2)})`;
             // Use fillRect instead of arc for particles (much faster, no beginPath/arc)
             const s = pt.size;
             ctx.fillRect(pt.x - s, pt.y - s, s * 2, s * 2);
@@ -413,10 +475,10 @@ export function PianoRoll({
         if (pool.length > 0) {
           ctx.globalCompositeOperation = 'lighter';
           ctx.lineWidth = 2;
-          for (let i = 0; i < pool.length; i++) {
-            const rp = pool[i];
-            const alpha = (rp.life / rp.maxLife) * 0.7;
-            ctx.strokeStyle = `rgba(${rp.r},${rp.g},${rp.b},${alpha.toFixed(2)})`;
+          for (let j = 0; j < pool.length; j++) {
+            const rp = pool[j];
+            const ra = (rp.life / rp.maxLife) * 0.7;
+            ctx.strokeStyle = `rgba(${rp.r},${rp.g},${rp.b},${ra.toFixed(2)})`;
             ctx.beginPath();
             ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI * 2);
             ctx.stroke();
@@ -463,7 +525,7 @@ export function PianoRoll({
     <canvas
       ref={canvasRef}
       className="w-full h-full block rounded-lg"
-      style={{ background: '#0c0a1a' }}
+      style={{ background: '#0c0e1f' }}
     />
   );
 }

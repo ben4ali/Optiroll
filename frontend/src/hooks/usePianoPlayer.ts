@@ -1,5 +1,5 @@
-import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT } from '@/lib/types';
 import type { NoteData, PlaybackState } from '@/lib/types';
+import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT } from '@/lib/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ElectricPiano,
@@ -44,6 +44,7 @@ export interface UsePianoPlayerReturn {
   reverbMix: number;
   humanize: boolean;
   octave: number;
+  transpose: number;
   // Duet
   duetEnabled: boolean;
   duetInstrument: string;
@@ -60,6 +61,7 @@ export interface UsePianoPlayerReturn {
   setReverbMix: (mix: number) => void;
   setHumanize: (on: boolean) => void;
   setOctave: (o: number) => void;
+  setTranspose: (t: number) => void;
   setDuetEnabled: (on: boolean) => void;
   setDuetInstrument: (name: string) => void;
   setDuetVolume: (v: number) => void;
@@ -98,10 +100,11 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const [speed, setSpeedState] = useState(1);
   const [instrument, setInstrumentState] = useState(DEFAULT_INSTRUMENT);
   const [loading, setLoading] = useState(false);
-  const [volume, setVolumeState] = useState(100);
+  const [volume, setVolumeState] = useState(38);
   const [reverbMix, setReverbMixState] = useState(0.2);
   const [humanize, setHumanizeState] = useState(false);
   const [octave, setOctaveState] = useState(0);
+  const [transpose, setTransposeState] = useState(0);
 
   // Duet state
   const [duetEnabled, setDuetEnabledState] = useState(false);
@@ -127,6 +130,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const reverbMixRef = useRef(reverbMix);
   const humanizeRef = useRef(humanize);
   const octaveRef = useRef(octave);
+  const transposeRef = useRef(transpose);
 
   // Duet refs
   const duetInstRef = useRef<AnyInstrument | null>(null);
@@ -241,8 +245,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const prevDuetInstrumentRef = useRef(duetInstrument);
   const prevDuetEnabledRef = useRef(duetEnabled);
   useEffect(() => {
-    const instrumentChanged =
-      duetInstrument !== prevDuetInstrumentRef.current;
+    const instrumentChanged = duetInstrument !== prevDuetInstrumentRef.current;
     const justEnabled = duetEnabled && !prevDuetEnabledRef.current;
     prevDuetInstrumentRef.current = duetInstrument;
     prevDuetEnabledRef.current = duetEnabled;
@@ -279,10 +282,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
       for (let i = 0; i < currentNotes.length; i++) {
         if (scheduledRef.current.has(i)) continue;
         const note = currentNotes[i];
-        if (
-          note.start <= t + LOOK_AHEAD_S &&
-          note.start + note.duration >= t
-        ) {
+        if (note.start <= t + LOOK_AHEAD_S && note.start + note.duration >= t) {
           scheduledRef.current.add(i);
           const delay = Math.max(0, (note.start - t) / speedRef.current);
           let acTime = ctx.currentTime + delay;
@@ -297,7 +297,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
           }
 
           inst.start({
-            note: note.pitch + octaveRef.current * 12,
+            note: note.pitch + octaveRef.current * 12 + transposeRef.current,
             velocity,
             time: acTime,
             duration: note.duration / speedRef.current,
@@ -306,7 +306,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
 
           // Duet: play the same note shifted by octave
           if (duetEnabledRef.current && duetInst) {
-            const duetPitch = note.pitch + duetOctaveRef.current * 12;
+            const duetPitch = note.pitch + duetOctaveRef.current * 12 + transposeRef.current;
             if (duetPitch >= 21 && duetPitch <= 108) {
               duetInst.start({
                 note: duetPitch,
@@ -381,8 +381,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const setSpeed = useCallback((s: number) => {
     if (stateRef.current === 'playing') {
       const elapsed =
-        ((performance.now() - startWallRef.current) / 1000) *
-        speedRef.current;
+        ((performance.now() - startWallRef.current) / 1000) * speedRef.current;
       startOffsetRef.current = startOffsetRef.current + elapsed;
       startWallRef.current = performance.now();
     }
@@ -419,6 +418,11 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const setOctave = useCallback((o: number) => {
     octaveRef.current = o;
     setOctaveState(o);
+  }, []);
+
+  const setTranspose = useCallback((t: number) => {
+    transposeRef.current = t;
+    setTransposeState(t);
   }, []);
 
   const setDuetEnabled = useCallback((on: boolean) => {
@@ -464,6 +468,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
     reverbMix,
     humanize,
     octave,
+    transpose,
     duetEnabled,
     duetInstrument,
     duetVolume,
@@ -478,6 +483,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
     setReverbMix,
     setHumanize,
     setOctave,
+    setTranspose,
     setDuetEnabled,
     setDuetInstrument,
     setDuetVolume,
