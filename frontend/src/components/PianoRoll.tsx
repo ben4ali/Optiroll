@@ -37,6 +37,8 @@ interface PianoRollProps {
   colorScheme?: ColorScheme;
   hitEffect?: HitEffect;
   particleIntensity?: number;
+  octave?: number;
+  transpose?: number;
 }
 
 // ── Pre-computed color cache ──
@@ -67,6 +69,8 @@ export function PianoRoll({
   colorScheme = DEFAULT_COLOR_SCHEME,
   hitEffect = 'glow',
   particleIntensity = 2,
+  octave = 0,
+  transpose = 0,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
@@ -78,10 +82,14 @@ export function PianoRoll({
   const playingRef = useRef(playing);
   const hitEffectRef = useRef(hitEffect);
   const particleIntensityRef = useRef(particleIntensity);
+  const octaveRef = useRef(octave);
+  const transposeRef = useRef(transpose);
   currentTimeRef.current = currentTime;
   playingRef.current = playing;
   hitEffectRef.current = hitEffect;
   particleIntensityRef.current = particleIntensity;
+  octaveRef.current = octave;
+  transposeRef.current = transpose;
 
   // Particle / ripple pools
   const particlePoolRef = useRef<Particle[]>([]);
@@ -187,7 +195,6 @@ export function PianoRoll({
 
       const cc = colorCacheRef.current;
       const colors = cc.colors;
-      const dimColors = cc.dimColors;
       const rgbColors = cc.rgbColors;
       const effect = hitEffectRef.current;
 
@@ -261,16 +268,19 @@ export function PianoRoll({
 
         if (noteTopY < -20 || noteBotY > hitLineY + 20) continue;
 
-        const x = (note.pitch - MIN_PITCH) * colWidth;
+        // Apply octave/transpose offset to match audio playback
+        const effectivePitch = note.pitch + octaveRef.current * 12 + transposeRef.current;
+        if (effectivePitch < MIN_PITCH || effectivePitch > MAX_PITCH) continue;
+
+        const x = (effectivePitch - MIN_PITCH) * colWidth;
         const barX = x + 1;
         const barWidth = colWidth - 2;
         const barHeight = noteTopY - noteBotY;
-        const pc = note.pitch % 12;
+        const pc = effectivePitch % 12;
         const active = t >= note.start && t < end;
-        const [r, g, b] = rgbColors[pc];
 
         if (active) {
-          _activePitches[note.pitch] = pc + 1;
+          _activePitches[effectivePitch] = pc + 1;
 
           // Spawn effects on note onset
           if (!spawnedRef.current.has(i)) {

@@ -296,13 +296,16 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
             detune = (Math.random() - 0.5) * 10;
           }
 
-          inst.start({
-            note: note.pitch + octaveRef.current * 12 + transposeRef.current,
-            velocity,
-            time: acTime,
-            duration: note.duration / speedRef.current,
-            detune,
-          });
+          const mainPitch = note.pitch + octaveRef.current * 12 + transposeRef.current;
+          if (mainPitch >= 21 && mainPitch <= 108) {
+            inst.start({
+              note: mainPitch,
+              velocity,
+              time: acTime,
+              duration: note.duration / speedRef.current,
+              detune,
+            });
+          }
 
           // Duet: play the same note shifted by octave
           if (duetEnabledRef.current && duetInst) {

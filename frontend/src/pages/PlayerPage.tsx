@@ -1,12 +1,12 @@
-import { Button } from '@/components/ui/button';
 import { ControlSidebar, TransportOverlay } from '@/components/ControlBar';
 import { PianoRoll } from '@/components/PianoRoll';
+import { Button } from '@/components/ui/button';
 import { usePianoPlayer } from '@/hooks/usePianoPlayer';
 import { fetchSheet } from '@/lib/api';
 import type { ColorScheme } from '@/lib/colors';
 import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
 import type { HitEffect, NoteData } from '@/lib/types';
-import { Loader2, Settings2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 
@@ -100,10 +100,10 @@ export function PlayerPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-white/40 hover:text-white/70 hover:bg-white/[0.08] bg-[#141735]/90 backdrop-blur-sm border border-white/10 rounded-md"
+              className="h-16 w-16 cursor-pointer scale-75 text-white/40 hover:text-white/70 hover:bg-white/[0.08] bg-[#141735]/90 backdrop-blur-sm border border-white/10 rounded-md"
               onClick={() => setSidebarOpen(true)}
             >
-              <Settings2 className="h-4 w-4" />
+              <img src="/genie_logo.png" alt="Settings" className="h-12 w-12" />
             </Button>
           </div>
         )}
@@ -117,6 +117,8 @@ export function PlayerPage() {
             colorScheme={colorScheme}
             hitEffect={hitEffect}
             particleIntensity={particleIntensity}
+            octave={player.octave}
+            transpose={player.transpose}
           />
         </div>
 

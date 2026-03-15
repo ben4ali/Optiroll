@@ -382,7 +382,11 @@ export const ControlSidebar = memo(function ControlSidebar({
     >
       {/* Header with integrated toggle */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-        <span className="text-sm font-medium text-white/80">Controls</span>
+        <div className="flex gap-2 items-center">
+          <img src="/genie_logo.png" alt="Logo" className="h-6 w-6" />
+          <span className="text-sm font-medium text-white/80">Controls</span>
+        </div>
+
         <Button
           variant="ghost"
           size="icon"
@@ -402,10 +406,7 @@ export const ControlSidebar = memo(function ControlSidebar({
           <span className="text-xs text-[#7a7f9d] block mb-1.5">
             Instrument
           </span>
-          <InstrumentSelect
-            value={instrument}
-            onChange={onInstrumentChange}
-          />
+          <InstrumentSelect value={instrument} onChange={onInstrumentChange} />
         </div>
 
         <ControlRow label="Volume">

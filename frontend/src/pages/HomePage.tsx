@@ -176,23 +176,23 @@ export function HomePage() {
                     className="relative shrink-0 group cursor-pointer p-1.5"
                   >
                     <div className="relative w-40 h-24 rounded-lg overflow-hidden">
-                    {sheet.image_filename ? (
-                      <img
-                        src={`/uploads/${sheet.image_filename}`}
-                        alt={sheet.name || sheet.filename}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-[#1a1d35] flex items-center justify-center">
-                        <Music className="h-6 w-6 text-white/10" />
+                      {sheet.image_filename ? (
+                        <img
+                          src={`/uploads/${sheet.image_filename}`}
+                          alt={sheet.name || sheet.filename}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-[#1a1d35] flex items-center justify-center">
+                          <Music className="h-6 w-6 text-white/10" />
+                        </div>
+                      )}
+                      {/* Hover overlay */}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center px-2">
+                        <span className="text-xs font-medium text-white text-center truncate">
+                          {sheet.name || sheet.filename}
+                        </span>
                       </div>
-                    )}
-                    {/* Hover overlay */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center px-2">
-                      <span className="text-xs font-medium text-white text-center truncate">
-                        {sheet.name || sheet.filename}
-                      </span>
-                    </div>
                     </div>
                   </button>
                 ))}
@@ -245,6 +245,13 @@ export function HomePage() {
           </div>
         </div>
       </section>
+      <div className="absolute bottom-15 -right-15">
+        <img
+          src="/genie_logo.png"
+          alt="Genie Logo"
+          className="w-25 h-25 opacity-20 animate-pulse-slow hover:opacity-100 transition-opacity cursor-pointer"
+        />
+      </div>
     </div>
   );
 }

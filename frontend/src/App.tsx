@@ -18,8 +18,9 @@ function AppLayout() {
         <div className="flex items-center gap-8">
           <Link
             to="/"
-            className="text-sm font-semibold tracking-[0.2em] text-white/90 uppercase hover:text-white transition-colors"
+            className="text-sm font-semibold tracking-[0.2em] text-white/90 uppercase hover:text-white transition-colors flex gap-2 items-center"
           >
+            <img src="/genie_logo.png" alt="" className="w-4 h-4" />
             OPTIROLL
           </Link>
           <nav className="flex items-center gap-6">
