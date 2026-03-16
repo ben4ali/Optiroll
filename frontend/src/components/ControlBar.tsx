@@ -11,7 +11,7 @@ import {
 import { Slider } from '@/components/ui/slider';
 import type { ColorScheme } from '@/lib/colors';
 import { COLOR_SCHEMES } from '@/lib/colors';
-import type { HitEffect, PlaybackState } from '@/lib/types';
+import type { PlaybackState, WebGLHitEffect } from '@/lib/types';
 import { INSTRUMENT_CATEGORIES } from '@/lib/types';
 import gsap from 'gsap';
 import {
@@ -37,8 +37,10 @@ interface ControlBarProps {
   octave: number;
   transpose: number;
   colorScheme: ColorScheme;
-  hitEffect: HitEffect;
-  particleIntensity: number;
+  hitEffect: WebGLHitEffect;
+  bloomStrength: number;
+  bloomRadius: number;
+  showKeyDividers: boolean;
   // Duet
   duetEnabled: boolean;
   duetInstrument: string;
@@ -57,8 +59,10 @@ interface ControlBarProps {
   onOctaveChange: (octave: number) => void;
   onTransposeChange: (transpose: number) => void;
   onColorSchemeChange: (scheme: ColorScheme) => void;
-  onHitEffectChange: (effect: HitEffect) => void;
-  onParticleIntensityChange: (v: number) => void;
+  onHitEffectChange: (effect: WebGLHitEffect) => void;
+  onBloomStrengthChange: (v: number) => void;
+  onBloomRadiusChange: (v: number) => void;
+  onShowKeyDividersChange: (on: boolean) => void;
   onDuetEnabledChange: (on: boolean) => void;
   onDuetInstrumentChange: (name: string) => void;
   onDuetVolumeChange: (vol: number) => void;
@@ -67,11 +71,13 @@ interface ControlBarProps {
 
 // ── Shared constants ──
 
-const HIT_EFFECTS: { label: string; value: HitEffect }[] = [
-  { label: 'Glow', value: 'glow' },
-  { label: 'Particles', value: 'particles' },
-  { label: 'Ripple', value: 'ripple' },
-  { label: 'None', value: 'none' },
+const HIT_EFFECTS: { label: string; value: WebGLHitEffect }[] = [
+  { label: 'Nebula Swirl', value: 'nebula' },
+  { label: 'Shockwave', value: 'shockwave' },
+  { label: 'Energy Spark', value: 'spark' },
+  { label: 'Stardust', value: 'stardust' },
+  { label: 'Nova Burst', value: 'nova' },
+  { label: 'Rift Drift', value: 'rift' },
 ];
 
 const OCTAVE_OPTIONS = [
@@ -144,6 +150,75 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function SeekBar({
+  currentTime,
+  duration,
+  onSeek,
+}: {
+  currentTime: number;
+  duration: number;
+  onSeek: (time: number) => void;
+}) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const pct =
+    duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+
+  const seekAt = useCallback(
+    (clientX: number) => {
+      const el = barRef.current;
+      if (!el || duration <= 0) return;
+      const rect = el.getBoundingClientRect();
+      const x = Math.min(rect.right, Math.max(rect.left, clientX));
+      const p = (x - rect.left) / rect.width;
+      onSeek(p * duration);
+    },
+    [duration, onSeek],
+  );
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      isDragging.current = true;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      seekAt(e.clientX);
+    },
+    [seekAt],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging.current) return;
+      seekAt(e.clientX);
+    },
+    [seekAt],
+  );
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    isDragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  }, []);
+
+  return (
+    <div
+      ref={barRef}
+      data-seek-bar
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      className="relative h-2 w-full rounded-full bg-white/10 cursor-pointer"
+    >
+      <div
+        className="absolute left-0 top-0 h-full rounded-full bg-white"
+        style={{ width: `${pct * 100}%` }}
+      />
+      <div
+        className="absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white shadow-sm"
+        style={{ left: `calc(${pct * 100}% - 5px)` }}
+      />
+    </div>
+  );
+}
+
 // ── Draggable transport overlay (bottom-left by default) ──
 
 export const TransportOverlay = memo(function TransportOverlay({
@@ -201,7 +276,7 @@ export const TransportOverlay = memo(function TransportOverlay({
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       const tag = (e.target as HTMLElement).closest(
-        'button, [role="slider"], input',
+        'button, [role="slider"], input, [data-seek-bar]',
       );
       if (tag) return;
       e.preventDefault();
@@ -314,14 +389,13 @@ export const TransportOverlay = memo(function TransportOverlay({
           <span className="text-[10px] text-[#7a7f9d] w-8 text-right tabular-nums shrink-0">
             {formatTime(currentTime)}
           </span>
-          <Slider
-            min={0}
-            max={duration}
-            step={0.1}
-            value={[currentTime]}
-            onValueChange={([v]) => onSeek(v)}
-            className="flex-1"
-          />
+          <div className="flex-1">
+            <SeekBar
+              currentTime={currentTime}
+              duration={duration}
+              onSeek={onSeek}
+            />
+          </div>
           <span className="text-[10px] text-[#7a7f9d] w-8 tabular-nums shrink-0">
             {formatTime(duration)}
           </span>
@@ -346,7 +420,9 @@ export const ControlSidebar = memo(function ControlSidebar({
   transpose,
   colorScheme,
   hitEffect,
-  particleIntensity,
+  bloomStrength,
+  bloomRadius,
+  showKeyDividers,
   duetEnabled,
   duetInstrument,
   duetVolume,
@@ -360,7 +436,9 @@ export const ControlSidebar = memo(function ControlSidebar({
   onTransposeChange,
   onColorSchemeChange,
   onHitEffectChange,
-  onParticleIntensityChange,
+  onBloomStrengthChange,
+  onBloomRadiusChange,
+  onShowKeyDividersChange,
   onDuetEnabledChange,
   onDuetInstrumentChange,
   onDuetVolumeChange,
@@ -619,11 +697,11 @@ export const ControlSidebar = memo(function ControlSidebar({
 
           <div className="mb-2.5">
             <span className="text-xs text-[#7a7f9d] block mb-1.5">
-              Hit Effect
+              Impact Effect
             </span>
             <Select
               value={hitEffect}
-              onValueChange={v => onHitEffectChange(v as HitEffect)}
+              onValueChange={v => onHitEffectChange(v as WebGLHitEffect)}
             >
               <SelectTrigger className="w-full border-white/10 bg-[#1e2345]">
                 <SelectValue />
@@ -638,21 +716,45 @@ export const ControlSidebar = memo(function ControlSidebar({
             </Select>
           </div>
 
-          {hitEffect === 'particles' && (
-            <ControlRow label="Intensity">
-              <Slider
-                min={1}
-                max={3}
-                step={1}
-                value={[particleIntensity]}
-                onValueChange={([v]) => onParticleIntensityChange(v)}
-                className="flex-1"
+          <ControlRow label="Glow">
+            <Slider
+              min={0}
+              max={3}
+              step={0.1}
+              value={[bloomStrength]}
+              onValueChange={([v]) => onBloomStrengthChange(v)}
+              className="flex-1"
+            />
+            <span className="text-xs text-[#7a7f9d] w-7 text-right tabular-nums">
+              {bloomStrength.toFixed(1)}
+            </span>
+          </ControlRow>
+
+          <ControlRow label="Spread">
+            <Slider
+              min={0}
+              max={1}
+              step={0.05}
+              value={[bloomRadius]}
+              onValueChange={([v]) => onBloomRadiusChange(v)}
+              className="flex-1"
+            />
+            <span className="text-xs text-[#7a7f9d] w-7 text-right tabular-nums">
+              {bloomRadius.toFixed(2)}
+            </span>
+          </ControlRow>
+
+          <ControlRow label="Key Lines">
+            <label className="flex items-center gap-2 text-xs text-[#7a7f9d]">
+              <input
+                type="checkbox"
+                className="app-checkbox"
+                checked={showKeyDividers}
+                onChange={e => onShowKeyDividersChange(e.target.checked)}
               />
-              <span className="text-xs text-[#7a7f9d] w-5 text-right">
-                {particleIntensity}
-              </span>
-            </ControlRow>
-          )}
+              Show dividers
+            </label>
+          </ControlRow>
         </div>
       </div>
     </div>

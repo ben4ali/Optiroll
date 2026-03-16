@@ -1,11 +1,11 @@
 import { ControlSidebar, TransportOverlay } from '@/components/ControlBar';
-import { PianoRoll } from '@/components/PianoRoll';
+import { PianoRollGL } from '@/components/PianoRollGL';
 import { Button } from '@/components/ui/button';
 import { usePianoPlayer } from '@/hooks/usePianoPlayer';
 import { fetchSheet } from '@/lib/api';
 import type { ColorScheme } from '@/lib/colors';
 import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
-import type { HitEffect, NoteData } from '@/lib/types';
+import type { NoteData, WebGLHitEffect } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
@@ -20,8 +20,12 @@ export function PlayerPage() {
   // Visual settings
   const [colorScheme, setColorScheme] =
     useState<ColorScheme>(DEFAULT_COLOR_SCHEME);
-  const [hitEffect, setHitEffect] = useState<HitEffect>('glow');
-  const [particleIntensity, setParticleIntensity] = useState(2);
+
+  // WebGL visual settings
+  const [hitEffect, setHitEffect] = useState<WebGLHitEffect>('nebula');
+  const [bloomStrength, setBloomStrength] = useState(1.5);
+  const [bloomRadius, setBloomRadius] = useState(0.4);
+  const [showKeyDividers, setShowKeyDividers] = useState(false);
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -58,12 +62,20 @@ export function PlayerPage() {
     setColorScheme(s);
   }, []);
 
-  const handleHitEffectChange = useCallback((e: HitEffect) => {
+  const handleHitEffectChange = useCallback((e: WebGLHitEffect) => {
     setHitEffect(e);
   }, []);
 
-  const handleParticleIntensityChange = useCallback((v: number) => {
-    setParticleIntensity(v);
+  const handleBloomStrengthChange = useCallback((v: number) => {
+    setBloomStrength(v);
+  }, []);
+
+  const handleBloomRadiusChange = useCallback((v: number) => {
+    setBloomRadius(v);
+  }, []);
+
+  const handleShowKeyDividersChange = useCallback((v: boolean) => {
+    setShowKeyDividers(v);
   }, []);
 
   if (loadingSheet) {
@@ -88,7 +100,7 @@ export function PlayerPage() {
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Sheet title */}
         {sheetName && (
-          <div className="absolute top-3 left-4 z-10">
+          <div className="absolute top-3 left-4 z-30">
             <span className="text-xs font-medium text-white/50 bg-[#141735]/90 backdrop-blur-sm border border-white/10 px-3 py-1 rounded-md">
               {sheetName}
             </span>
@@ -109,17 +121,20 @@ export function PlayerPage() {
           </div>
         )}
 
-        {/* Piano Roll fills all space */}
+        {/* WebGL Piano Roll fills all space */}
         <div className="flex-1 min-h-0">
-          <PianoRoll
+          <PianoRollGL
             notes={notes}
             currentTime={player.currentTime}
             playing={player.playbackState === 'playing'}
             colorScheme={colorScheme}
-            hitEffect={hitEffect}
-            particleIntensity={particleIntensity}
             octave={player.octave}
             transpose={player.transpose}
+            hitEffect={hitEffect}
+            bloomStrength={bloomStrength}
+            bloomRadius={bloomRadius}
+            studioDarkness={0}
+            showKeyDividers={showKeyDividers}
           />
         </div>
 
@@ -151,7 +166,9 @@ export function PlayerPage() {
         transpose={player.transpose}
         colorScheme={colorScheme}
         hitEffect={hitEffect}
-        particleIntensity={particleIntensity}
+        bloomStrength={bloomStrength}
+        bloomRadius={bloomRadius}
+        showKeyDividers={showKeyDividers}
         duetEnabled={player.duetEnabled}
         duetInstrument={player.duetInstrument}
         duetVolume={player.duetVolume}
@@ -165,7 +182,9 @@ export function PlayerPage() {
         onTransposeChange={player.setTranspose}
         onColorSchemeChange={handleColorSchemeChange}
         onHitEffectChange={handleHitEffectChange}
-        onParticleIntensityChange={handleParticleIntensityChange}
+        onBloomStrengthChange={handleBloomStrengthChange}
+        onBloomRadiusChange={handleBloomRadiusChange}
+        onShowKeyDividersChange={handleShowKeyDividersChange}
         onDuetEnabledChange={player.setDuetEnabled}
         onDuetInstrumentChange={player.setDuetInstrument}
         onDuetVolumeChange={player.setDuetVolume}
