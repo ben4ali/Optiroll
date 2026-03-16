@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "piano_vision.db"
+from core.config import DB_PATH
 
 
 def _connect() -> sqlite3.Connection:
@@ -15,7 +14,6 @@ def _connect() -> sqlite3.Connection:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Add columns that may not exist in older databases."""
     new_columns = [
         ("name", "TEXT"),
         ("author", "TEXT"),
@@ -26,7 +24,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         try:
             conn.execute(f"ALTER TABLE sheets ADD COLUMN {col_name} {col_type}")
         except sqlite3.OperationalError:
-            pass  # column already exists
+            pass
     conn.commit()
 
 
@@ -75,7 +73,6 @@ def get_all_sheets() -> list[dict]:
 
 
 def get_sheet(sheet_id: int) -> dict | None:
-    """Return full sheet metadata + notes."""
     conn = _connect()
     row = conn.execute(
         "SELECT id, filename, name, author, image_filename, note_count, duration, "

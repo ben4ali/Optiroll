@@ -22,8 +22,12 @@ A full-stack web application that converts sheet music images into interactive, 
 ```
 Piano Vision/
 ├── backend/             # Python API server
-│   ├── main.py          # FastAPI app — upload, process, SSE progress, CRUD
-│   ├── database.py      # SQLite helpers (sheets, notes)
+│   ├── main.py          # FastAPI entry point
+│   ├── api/routes/      # Process and sheet CRUD routers
+│   ├── core/config.py   # Environment-backed constants
+│   ├── db/database.py   # SQLite helpers (sheets, notes)
+│   ├── services/        # OMR + music parsing services
+│   ├── utils/logger.py  # Queue-backed log capture for SSE
 │   └── requirements.txt
 ├── frontend/            # React SPA
 │   ├── src/
@@ -87,6 +91,9 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Important: keep plain onnxruntime uninstalled.
+# Genie: Optiroll uses onnxruntime-gpu so CUDAExecutionProvider can drive Nvidia GPUs.
 
 # Start the API server (port 8000)
 uvicorn main:app --reload

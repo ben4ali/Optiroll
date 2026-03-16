@@ -9,6 +9,7 @@ const API_BASE = import.meta.env.VITE_API_URL ?? '';
 export async function processSheetWithProgress(
   file: File,
   onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal,
 ): Promise<{ notes: NoteData[]; sheetId: number }> {
   const formData = new FormData();
   formData.append('file', file);
@@ -16,6 +17,7 @@ export async function processSheetWithProgress(
   const res = await fetch(`${API_BASE}/process-sheet`, {
     method: 'POST',
     body: formData,
+    signal,
   });
 
   if (!res.ok) {
@@ -72,7 +74,9 @@ export async function fetchSheet(sheetId: number): Promise<SheetDetail> {
 }
 
 export async function deleteSheetById(sheetId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/sheets/${sheetId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/sheets/${sheetId}`, {
+    method: 'DELETE',
+  });
   if (!res.ok) throw new Error('Failed to delete sheet');
 }
 

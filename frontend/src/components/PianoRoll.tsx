@@ -17,7 +17,7 @@ const MAX_PITCH = 108;
 const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1;
 
 const VISIBLE_SECONDS = 6;
-const KEYBOARD_HEIGHT = 120;
+const KEYBOARD_HEIGHT = 180;
 
 // Pre-compute which pitches are black keys (static lookup)
 const IS_BLACK = new Uint8Array(128);
@@ -269,7 +269,8 @@ export function PianoRoll({
         if (noteTopY < -20 || noteBotY > hitLineY + 20) continue;
 
         // Apply octave/transpose offset to match audio playback
-        const effectivePitch = note.pitch + octaveRef.current * 12 + transposeRef.current;
+        const effectivePitch =
+          note.pitch + octaveRef.current * 12 + transposeRef.current;
         if (effectivePitch < MIN_PITCH || effectivePitch > MAX_PITCH) continue;
 
         const x = (effectivePitch - MIN_PITCH) * colWidth;

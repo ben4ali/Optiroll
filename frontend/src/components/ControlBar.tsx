@@ -135,6 +135,15 @@ function InstrumentSelect({
   );
 }
 
+// ── Helper: format seconds as m:ss ──
+
+function formatTime(seconds: number): string {
+  if (!seconds || !isFinite(seconds)) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 // ── Draggable transport overlay (bottom-left by default) ──
 
 export const TransportOverlay = memo(function TransportOverlay({
@@ -142,19 +151,25 @@ export const TransportOverlay = memo(function TransportOverlay({
   loading,
   duetLoading,
   speed,
+  currentTime,
+  duration,
   onPlay,
   onPause,
   onStop,
   onSpeedChange,
+  onSeek,
 }: {
   playbackState: PlaybackState;
   loading: boolean;
   duetLoading: boolean;
   speed: number;
+  currentTime: number;
+  duration: number;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
   onSpeedChange: (s: number) => void;
+  onSeek: (time: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{
@@ -230,65 +245,88 @@ export const TransportOverlay = memo(function TransportOverlay({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      className="absolute bottom-[88px] left-4 flex items-center gap-3 rounded-full border border-white/10 bg-[#141735]/95 backdrop-blur-md px-5 py-2.5 shadow-lg shadow-black/30 cursor-grab active:cursor-grabbing select-none touch-none"
+      className="absolute bottom-[220px] left-4 flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#141735]/55 backdrop-blur-md px-5 py-3 shadow-lg shadow-black/30 cursor-grab z-10 active:cursor-grabbing select-none touch-none"
       style={{
         transform: `translate(${offset.x}px, ${offset.y}px)`,
       }}
     >
-      {/* Play/Pause */}
-      {playbackState === 'playing' ? (
+      {/* Top row: Play/Pause, Stop, divider, Speed */}
+      <div className="flex items-center gap-3">
+        {/* Play/Pause */}
+        {playbackState === 'playing' ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/[0.08]"
+            onClick={onPause}
+          >
+            <Pause className="h-5 w-5" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/[0.08]"
+            onClick={onPlay}
+            disabled={loading || duetLoading}
+          >
+            {loading || duetLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Play className="h-5 w-5" />
+            )}
+          </Button>
+        )}
+
+        {/* Stop */}
         <Button
           variant="ghost"
           size="icon"
           className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/[0.08]"
-          onClick={onPause}
+          onClick={onStop}
+          disabled={playbackState === 'idle'}
         >
-          <Pause className="h-5 w-5" />
+          <Square className="h-4 w-4" />
         </Button>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/[0.08]"
-          onClick={onPlay}
-          disabled={loading || duetLoading}
-        >
-          {loading || duetLoading ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Play className="h-5 w-5" />
-          )}
-        </Button>
-      )}
 
-      {/* Stop */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/[0.08]"
-        onClick={onStop}
-        disabled={playbackState === 'idle'}
-      >
-        <Square className="h-4 w-4" />
-      </Button>
+        {/* Divider */}
+        <div className="h-5 w-px bg-white/10" />
 
-      {/* Divider */}
-      <div className="h-5 w-px bg-white/10" />
-
-      {/* Speed */}
-      <div className="flex items-center gap-2 min-w-[120px]">
-        <Slider
-          min={0.25}
-          max={2}
-          step={0.05}
-          value={[speed]}
-          onValueChange={([v]) => onSpeedChange(v)}
-          className="flex-1"
-        />
-        <span className="text-xs text-[#7a7f9d] w-9 text-right tabular-nums">
-          {speed.toFixed(2)}x
-        </span>
+        {/* Speed */}
+        <div className="flex items-center gap-2 min-w-[120px]">
+          <Slider
+            min={0.25}
+            max={2}
+            step={0.05}
+            value={[speed]}
+            onValueChange={([v]) => onSpeedChange(v)}
+            className="flex-1"
+          />
+          <span className="text-xs text-[#7a7f9d] w-9 text-right tabular-nums">
+            {speed.toFixed(2)}x
+          </span>
+        </div>
       </div>
+
+      {/* Seek bar */}
+      {duration > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#7a7f9d] w-8 text-right tabular-nums shrink-0">
+            {formatTime(currentTime)}
+          </span>
+          <Slider
+            min={0}
+            max={duration}
+            step={0.1}
+            value={[currentTime]}
+            onValueChange={([v]) => onSeek(v)}
+            className="flex-1"
+          />
+          <span className="text-[10px] text-[#7a7f9d] w-8 tabular-nums shrink-0">
+            {formatTime(duration)}
+          </span>
+        </div>
+      )}
     </div>
   );
 });

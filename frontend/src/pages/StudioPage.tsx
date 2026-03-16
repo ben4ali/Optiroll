@@ -1,12 +1,9 @@
 import { SheetLibrary } from '@/components/SheetLibrary';
 import { SheetUpload } from '@/components/SheetUpload';
 import gsap from 'gsap';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useEffect, useRef } from 'react';
 
 export function StudioPage() {
-  const navigate = useNavigate();
-  const [refreshKey, setRefreshKey] = useState(0);
   const headerRef = useRef<HTMLHeadingElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -29,34 +26,23 @@ export function StudioPage() {
     }
   }, []);
 
-  const handleProcessed = useCallback(
-    (sheetId: number) => {
-      setRefreshKey(k => k + 1);
-      navigate(`/player/${sheetId}`);
-    },
-    [navigate],
-  );
-
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-4xl mx-auto px-6 py-10">
-        <h1
-          ref={headerRef}
-          className="text-2xl font-bold text-white mb-8"
-        >
+        <h1 ref={headerRef} className="text-4xl font-light text-white mb-8">
           Studio
         </h1>
 
         <div ref={contentRef} className="flex flex-col gap-6">
           {/* Upload section */}
-          <SheetUpload onProcessed={handleProcessed} />
+          <SheetUpload />
 
           {/* Library section */}
           <section className="rounded-xl bg-[#181b2e] p-5">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Your Library</h2>
+              <h2 className="text-lg font-medium text-white">Your Library</h2>
             </div>
-            <SheetLibrary refreshKey={refreshKey} />
+            <SheetLibrary />
           </section>
         </div>
       </div>

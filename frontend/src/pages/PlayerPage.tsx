@@ -29,6 +29,7 @@ export function PlayerPage() {
   useEffect(() => {
     if (!sheetId) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingSheet(true);
     setLoadError(null);
 
@@ -128,10 +129,13 @@ export function PlayerPage() {
           loading={player.loading}
           duetLoading={player.duetLoading}
           speed={player.speed}
+          currentTime={player.currentTime}
+          duration={player.duration}
           onPlay={player.play}
           onPause={player.pause}
           onStop={player.stop}
           onSpeedChange={player.setSpeed}
+          onSeek={player.seek}
         />
       </div>
 

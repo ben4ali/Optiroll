@@ -37,6 +37,7 @@ type AnyInstrument = {
 export interface UsePianoPlayerReturn {
   playbackState: PlaybackState;
   currentTime: number;
+  duration: number;
   speed: number;
   instrument: string;
   loading: boolean;
@@ -55,6 +56,7 @@ export interface UsePianoPlayerReturn {
   play: () => void;
   pause: () => void;
   stop: () => void;
+  seek: (time: number) => void;
   setSpeed: (s: number) => void;
   setInstrument: (name: string) => void;
   setVolume: (v: number) => void;
@@ -296,7 +298,8 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
             detune = (Math.random() - 0.5) * 10;
           }
 
-          const mainPitch = note.pitch + octaveRef.current * 12 + transposeRef.current;
+          const mainPitch =
+            note.pitch + octaveRef.current * 12 + transposeRef.current;
           if (mainPitch >= 21 && mainPitch <= 108) {
             inst.start({
               note: mainPitch,
@@ -309,7 +312,8 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
 
           // Duet: play the same note shifted by octave
           if (duetEnabledRef.current && duetInst) {
-            const duetPitch = note.pitch + duetOctaveRef.current * 12 + transposeRef.current;
+            const duetPitch =
+              note.pitch + duetOctaveRef.current * 12 + transposeRef.current;
             if (duetPitch >= 21 && duetPitch <= 108) {
               duetInst.start({
                 note: duetPitch,
@@ -379,6 +383,19 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
     stateRef.current = 'idle';
     setPlaybackState('idle');
     setCurrentTime(0);
+  }, []);
+
+  const seek = useCallback((time: number) => {
+    const clamped = Math.max(0, Math.min(time, totalDurationRef.current));
+    instRef.current?.stop();
+    duetInstRef.current?.stop();
+    scheduledRef.current.clear();
+    startOffsetRef.current = clamped;
+    setCurrentTime(clamped);
+
+    if (stateRef.current === 'playing') {
+      startWallRef.current = performance.now();
+    }
   }, []);
 
   const setSpeed = useCallback((s: number) => {
@@ -464,6 +481,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   return {
     playbackState,
     currentTime,
+    duration: totalDuration,
     speed,
     instrument,
     loading,
@@ -480,6 +498,7 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
     play,
     pause,
     stop,
+    seek,
     setSpeed,
     setInstrument,
     setVolume,

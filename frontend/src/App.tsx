@@ -1,3 +1,5 @@
+import { ProcessingWidget } from '@/components/ProcessingWidget';
+import { ProcessingProvider } from '@/contexts/ProcessingContext';
 import { HomePage } from '@/pages/HomePage';
 import { PlayerPage } from '@/pages/PlayerPage';
 import { StudioPage } from '@/pages/StudioPage';
@@ -48,18 +50,22 @@ function AppLayout() {
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
         <Outlet />
       </div>
+
+      <ProcessingWidget />
     </div>
   );
 }
 
 export default function App() {
   return (
-    <Routes>
-      <Route element={<AppLayout />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/studio" element={<StudioPage />} />
-        <Route path="/player/:sheetId" element={<PlayerPage />} />
-      </Route>
-    </Routes>
+    <ProcessingProvider>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/studio" element={<StudioPage />} />
+          <Route path="/player/:sheetId" element={<PlayerPage />} />
+        </Route>
+      </Routes>
+    </ProcessingProvider>
   );
 }

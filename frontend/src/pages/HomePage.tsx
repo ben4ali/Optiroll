@@ -245,13 +245,6 @@ export function HomePage() {
           </div>
         </div>
       </section>
-      <div className="absolute bottom-15 -right-15">
-        <img
-          src="/genie_logo.png"
-          alt="Genie Logo"
-          className="w-25 h-25 opacity-20 animate-pulse-slow hover:opacity-100 transition-opacity cursor-pointer"
-        />
-      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { useProcessing } from '@/contexts/ProcessingContext';
 import {
   deleteSheetById,
   fetchSheets,
@@ -18,11 +19,8 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-interface SheetLibraryProps {
-  refreshKey?: number;
-}
-
-export function SheetLibrary({ refreshKey }: SheetLibraryProps) {
+export function SheetLibrary() {
+  const { status } = useProcessing();
   const navigate = useNavigate();
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +42,14 @@ export function SheetLibrary({ refreshKey }: SheetLibraryProps) {
 
   useEffect(() => {
     refresh();
-  }, [refresh, refreshKey]);
+  }, [refresh]);
+
+  // Auto-refresh when background processing completes
+  useEffect(() => {
+    if (status === 'done') {
+      refresh();
+    }
+  }, [status, refresh]);
 
   // Animate rows in when sheets load
   useEffect(() => {
