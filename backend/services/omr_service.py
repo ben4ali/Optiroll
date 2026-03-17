@@ -316,12 +316,18 @@ def process_sheet_upload(file: UploadFile, request: Request) -> StreamingRespons
                         raise OMRCancelled()
 
                     page_notes = read_musicxml_notes(str(musicxml_path))
-                    for note in page_notes:
-                        note["start"] = round(note["start"] + time_offset, 4)
-
-                    page_duration = compute_duration(page_notes) if page_notes else 0.0
                     if page_notes:
+                        min_start = min(note["start"] for note in page_notes)
+                        if min_start > 0:
+                            for note in page_notes:
+                                note["start"] = max(0.0, note["start"] - min_start)
+
+                        page_duration = compute_duration(page_notes)
+                        for note in page_notes:
+                            note["start"] = round(note["start"] + time_offset, 4)
                         time_offset += page_duration + 0.5
+                    else:
+                        page_duration = 0.0
 
                     all_notes.extend(page_notes)
                     elapsed_page = time.perf_counter() - started_page
