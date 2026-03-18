@@ -1,4 +1,3 @@
-import { SheetLibrary } from '@/components/SheetLibrary';
 import { SheetUpload } from '@/components/SheetUpload';
 import gsap from 'gsap';
 import { useEffect, useRef } from 'react';
@@ -37,12 +36,32 @@ export function StudioPage() {
           {/* Upload section */}
           <SheetUpload />
 
-          {/* Library section */}
-          <section className="rounded-xl bg-[#181b2e] p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-medium text-white">Your Library</h2>
+          {/* OMR explanation */}
+          <section className="rounded-xl  p-5">
+            <h2 className="text-lg font-medium text-white mb-2">
+              How Optical Music Recognition Works
+            </h2>
+            <div className="text-sm text-[#a1a1aa] leading-relaxed space-y-3">
+              <p>
+                OMR converts scanned sheet music into playable data in a few
+                steps. First, pages are normalized: the upload is resized to a
+                safe pixel budget and PDF pages are rendered at your chosen DPI.
+                This preserves detail while keeping GPU/CPU memory stable.
+              </p>
+              <p>
+                The model then detects staff lines, symbols, and note groups. It
+                separates layered markings, extracts rhythmic structure, and
+                reconstructs musical timing. These passes are combined into a
+                MusicXML representation that captures pitch, duration, and
+                expression.
+              </p>
+              <p>
+                Finally, the MusicXML is translated into note events for the
+                piano roll. The processing settings above let you trade speed
+                for precision: higher DPI and pixel budgets reveal fine detail,
+                while larger batch sizes favor throughput.
+              </p>
             </div>
-            <SheetLibrary />
           </section>
         </div>
       </div>

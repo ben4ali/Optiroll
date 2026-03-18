@@ -1,11 +1,19 @@
 import { ProcessingWidget } from '@/components/ProcessingWidget';
 import { ProcessingProvider } from '@/contexts/ProcessingContext';
 import { HomePage } from '@/pages/HomePage';
+import { LibraryPage } from '@/pages/LibraryPage';
 import { PlayerPage } from '@/pages/PlayerPage';
 import { StudioPage } from '@/pages/StudioPage';
+import { useCallback, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, Route, Routes } from 'react-router';
 
 function AppLayout() {
+  const [nowPlayingTitle, setNowPlayingTitle] = useState('');
+  const stopPlaybackRef = useRef<(() => void) | null>(null);
+  const registerStopPlayback = useCallback((fn: (() => void) | null) => {
+    stopPlaybackRef.current = fn;
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-[#0f1225] text-foreground relative overflow-hidden">
       {/* Ambient background gradients */}
@@ -29,6 +37,7 @@ function AppLayout() {
             <NavLink
               to="/"
               end
+              onClick={() => stopPlaybackRef.current?.()}
               className={({ isActive }) =>
                 `text-sm tracking-wide transition-colors ${isActive ? 'text-white font-medium' : 'text-white/40 hover:text-white/70'}`
               }
@@ -37,18 +46,45 @@ function AppLayout() {
             </NavLink>
             <NavLink
               to="/studio"
+              onClick={() => stopPlaybackRef.current?.()}
               className={({ isActive }) =>
                 `text-sm tracking-wide transition-colors ${isActive ? 'text-white font-medium' : 'text-white/40 hover:text-white/70'}`
               }
             >
               Studio
             </NavLink>
+            <NavLink
+              to="/library"
+              onClick={() => stopPlaybackRef.current?.()}
+              className={({ isActive }) =>
+                `text-sm tracking-wide transition-colors ${isActive ? 'text-white font-medium' : 'text-white/40 hover:text-white/70'}`
+              }
+            >
+              Library
+            </NavLink>
           </nav>
         </div>
+        {nowPlayingTitle && (
+          <div className="max-w-[320px] text-right text-xs text-white/70">
+            <span className="uppercase tracking-[0.2em] text-white/40">
+              Now Playing
+            </span>
+            <span className="mx-2 text-white/30">•</span>
+            <span className="text-sm text-white truncate">
+              {nowPlayingTitle}
+            </span>
+          </div>
+        )}
       </header>
 
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
-        <Outlet />
+        <Outlet
+          context={{
+            nowPlayingTitle,
+            setNowPlayingTitle,
+            registerStopPlayback,
+          }}
+        />
       </div>
 
       <ProcessingWidget />
@@ -63,6 +99,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/" element={<HomePage />} />
           <Route path="/studio" element={<StudioPage />} />
+          <Route path="/library" element={<LibraryPage />} />
           <Route path="/player/:sheetId" element={<PlayerPage />} />
         </Route>
       </Routes>

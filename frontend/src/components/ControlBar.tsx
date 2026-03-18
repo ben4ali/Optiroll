@@ -15,6 +15,7 @@ import type { PlaybackState, WebGLHitEffect } from '@/lib/types';
 import { INSTRUMENT_CATEGORIES } from '@/lib/types';
 import gsap from 'gsap';
 import {
+  ChevronDown,
   ChevronRight,
   Loader2,
   Pause,
@@ -154,10 +155,14 @@ function SeekBar({
   currentTime,
   duration,
   onSeek,
+  onSeekStart,
+  onSeekEnd,
 }: {
   currentTime: number;
   duration: number;
   onSeek: (time: number) => void;
+  onSeekStart?: () => void;
+  onSeekEnd?: () => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
@@ -180,9 +185,10 @@ function SeekBar({
     (e: React.PointerEvent) => {
       isDragging.current = true;
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      onSeekStart?.();
       seekAt(e.clientX);
     },
-    [seekAt],
+    [onSeekStart, seekAt],
   );
 
   const onPointerMove = useCallback(
@@ -193,10 +199,23 @@ function SeekBar({
     [seekAt],
   );
 
-  const onPointerUp = useCallback((e: React.PointerEvent) => {
-    isDragging.current = false;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  }, []);
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      isDragging.current = false;
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      onSeekEnd?.();
+    },
+    [onSeekEnd],
+  );
+
+  const onPointerCancel = useCallback(
+    (e: React.PointerEvent) => {
+      isDragging.current = false;
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      onSeekEnd?.();
+    },
+    [onSeekEnd],
+  );
 
   return (
     <div
@@ -205,15 +224,16 @@ function SeekBar({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      className="relative h-2 w-full rounded-full bg-white/10 cursor-pointer"
+      onPointerCancel={onPointerCancel}
+      className="relative h-0.5 w-full rounded-full bg-white/10 cursor-pointer"
     >
       <div
         className="absolute left-0 top-0 h-full rounded-full bg-white"
         style={{ width: `${pct * 100}%` }}
       />
       <div
-        className="absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white shadow-sm"
-        style={{ left: `calc(${pct * 100}% - 5px)` }}
+        className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-sm"
+        style={{ left: `${pct * 100}%` }}
       />
     </div>
   );
@@ -233,6 +253,9 @@ export const TransportOverlay = memo(function TransportOverlay({
   onStop,
   onSpeedChange,
   onSeek,
+  onSeekStart,
+  onSeekEnd,
+  onToggleDock,
 }: {
   playbackState: PlaybackState;
   loading: boolean;
@@ -245,6 +268,9 @@ export const TransportOverlay = memo(function TransportOverlay({
   onStop: () => void;
   onSpeedChange: (s: number) => void;
   onSeek: (time: number) => void;
+  onSeekStart?: () => void;
+  onSeekEnd?: () => void;
+  onToggleDock: () => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{
@@ -367,6 +393,16 @@ export const TransportOverlay = memo(function TransportOverlay({
         {/* Divider */}
         <div className="h-5 w-px bg-white/10" />
 
+        {/* Dock */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-white/60 hover:text-white hover:bg-white/[0.08]"
+          onClick={onToggleDock}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </Button>
+
         {/* Speed */}
         <div className="flex items-center gap-2 min-w-[120px]">
           <Slider
@@ -394,6 +430,8 @@ export const TransportOverlay = memo(function TransportOverlay({
               currentTime={currentTime}
               duration={duration}
               onSeek={onSeek}
+              onSeekStart={onSeekStart}
+              onSeekEnd={onSeekEnd}
             />
           </div>
           <span className="text-[10px] text-[#7a7f9d] w-8 tabular-nums shrink-0">
@@ -401,6 +439,120 @@ export const TransportOverlay = memo(function TransportOverlay({
           </span>
         </div>
       )}
+    </div>
+  );
+});
+
+// ── Docked transport bar (full-width under keyboard) ──
+
+export const TransportDocked = memo(function TransportDocked({
+  playbackState,
+  loading,
+  duetLoading,
+  speed,
+  currentTime,
+  duration,
+  onPlay,
+  onPause,
+  onStop,
+  onSpeedChange,
+  onSeek,
+  onSeekStart,
+  onSeekEnd,
+  onToggleDock,
+}: {
+  playbackState: PlaybackState;
+  loading: boolean;
+  duetLoading: boolean;
+  speed: number;
+  currentTime: number;
+  duration: number;
+  onPlay: () => void;
+  onPause: () => void;
+  onStop: () => void;
+  onSpeedChange: (s: number) => void;
+  onSeek: (time: number) => void;
+  onSeekStart?: () => void;
+  onSeekEnd?: () => void;
+  onToggleDock: () => void;
+}) {
+  return (
+    <div className="w-full h-7 shrink-0 z-20 flex items-center gap-4 px-5 border-t border-white/10 bg-[#11142b]/90 backdrop-blur-md">
+      <div className="flex items-center gap-2">
+        {playbackState === 'playing' ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-white/70 hover:text-white hover:bg-white/[0.08]"
+            onClick={onPause}
+          >
+            <Pause className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-white/70 hover:text-white hover:bg-white/[0.08]"
+            onClick={onPlay}
+            disabled={loading || duetLoading}
+          >
+            {loading || duetLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-white/70 hover:text-white hover:bg-white/[0.08]"
+          onClick={onStop}
+          disabled={playbackState === 'idle'}
+        >
+          <Square className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      <div className="flex-1 flex items-center gap-2">
+        <span className="text-[10px] text-[#7a7f9d] w-8 text-right tabular-nums shrink-0">
+          {formatTime(currentTime)}
+        </span>
+        <SeekBar
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={onSeek}
+          onSeekStart={onSeekStart}
+          onSeekEnd={onSeekEnd}
+        />
+        <span className="text-[10px] text-[#7a7f9d] w-8 tabular-nums shrink-0">
+          {formatTime(duration)}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 min-w-[140px]">
+        <Slider
+          min={0.25}
+          max={2}
+          step={0.05}
+          value={[speed]}
+          onValueChange={([v]) => onSpeedChange(v)}
+          className="flex-1"
+        />
+        <span className="text-xs text-[#7a7f9d] w-9 text-right tabular-nums">
+          {speed.toFixed(2)}x
+        </span>
+      </div>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-white/60 hover:text-white hover:bg-white/[0.08]"
+        onClick={onToggleDock}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </Button>
     </div>
   );
 });

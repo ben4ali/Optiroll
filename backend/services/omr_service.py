@@ -24,10 +24,18 @@ from core.config import (
     ALLOWED_IMAGE_TYPES,
     ALLOWED_PDF_TYPES,
     MAX_IMAGE_PIXELS,
+    MAX_IMAGE_PIXELS_MAX,
+    MAX_IMAGE_PIXELS_MIN,
     OMR_CPU_BATCH_SIZE,
     OMR_GPU_BATCH_SIZE,
+    OMR_INFERENCE_BATCH_SIZE_MAX,
+    OMR_INFERENCE_BATCH_SIZE_MIN,
     PDF_MIN_DPI,
+    PDF_MIN_DPI_MAX,
+    PDF_MIN_DPI_MIN,
     PDF_RENDER_DPI,
+    PDF_RENDER_DPI_MAX,
+    PDF_RENDER_DPI_MIN,
 )
 from db.database import save_sheet
 from services.music_service import compute_duration, read_musicxml_notes
@@ -101,12 +109,13 @@ def _select_omr_batch_size() -> int:
     return OMR_CPU_BATCH_SIZE
 
 
-def patch_oemer_batch_size() -> None:
+def patch_oemer_batch_size(selected_batch_size: int | None = None) -> None:
     try:
         from oemer import ete
         from oemer import inference as inference_mod
 
-        selected_batch_size = _select_omr_batch_size()
+        if selected_batch_size is None:
+            selected_batch_size = _select_omr_batch_size()
         if getattr(ete, "_pv_batch_size", None) == selected_batch_size:
             return
 
@@ -133,11 +142,7 @@ def patch_oemer_batch_size() -> None:
         inference_mod.inference = _patched_inference
         ete.inference = _patched_inference
         ete._pv_batch_size = selected_batch_size
-        logger.info(
-            "Patched oemer inference batch size to %d (%s)",
-            selected_batch_size,
-            "CUDA" if selected_batch_size == OMR_GPU_BATCH_SIZE else "CPU",
-        )
+        logger.info("Patched oemer inference batch size to %d", selected_batch_size)
     except Exception as exc:
         logger.warning("Could not patch oemer batch size: %s", exc)
 
@@ -173,19 +178,25 @@ def _is_pdf(filename: str, content_type: str | None) -> bool:
     return Path(filename).suffix.lower() == ".pdf"
 
 
-def _pdf_to_images(pdf_path: Path, output_dir: Path) -> list[Path]:
+def _pdf_to_images(
+    pdf_path: Path,
+    output_dir: Path,
+    render_dpi: int,
+    min_dpi: int,
+    max_pixels: int,
+) -> list[Path]:
     doc = fitz.open(str(pdf_path))
     image_paths: list[Path] = []
     try:
         for index, page in enumerate(doc):
             width_inches = page.rect.width / 72.0
             height_inches = page.rect.height / 72.0
-            base_pixels = (width_inches * PDF_RENDER_DPI) * (height_inches * PDF_RENDER_DPI)
-            if base_pixels > MAX_IMAGE_PIXELS:
-                scale = math.sqrt(MAX_IMAGE_PIXELS / base_pixels)
-                dpi = max(PDF_MIN_DPI, int(PDF_RENDER_DPI * scale))
+            base_pixels = (width_inches * render_dpi) * (height_inches * render_dpi)
+            if base_pixels > max_pixels:
+                scale = math.sqrt(max_pixels / base_pixels)
+                dpi = max(min_dpi, int(render_dpi * scale))
             else:
-                dpi = PDF_RENDER_DPI
+                dpi = render_dpi
             pix = page.get_pixmap(dpi=dpi)
             img_path = output_dir / f"page_{index + 1:03d}.png"
             pix.save(str(img_path))
@@ -195,24 +206,71 @@ def _pdf_to_images(pdf_path: Path, output_dir: Path) -> list[Path]:
     return image_paths
 
 
-def _downscale_image_if_needed(img_path: Path) -> Path:
+def _downscale_image_if_needed(img_path: Path, max_pixels: int) -> Path:
     with Image.open(img_path) as image:
         width, height = image.size
         pixels = width * height
-        if pixels <= MAX_IMAGE_PIXELS:
+        if pixels <= max_pixels:
             return img_path
-        ratio = math.sqrt(MAX_IMAGE_PIXELS / pixels)
+        ratio = math.sqrt(max_pixels / pixels)
         new_size = (max(1, int(width * ratio)), max(1, int(height * ratio)))
         resized = image.resize(new_size, Image.Resampling.LANCZOS)
         resized.save(img_path)
     return img_path
 
 
+def _clamp_int(value: int | None, min_value: int, max_value: int, default: int) -> int:
+    if value is None:
+        return default
+    return max(min_value, min(max_value, value))
+
+
+def _resolve_settings(overrides: dict | None) -> dict:
+    overrides = overrides or {}
+    render_dpi = _clamp_int(
+        overrides.get("pdf_render_dpi"),
+        PDF_RENDER_DPI_MIN,
+        PDF_RENDER_DPI_MAX,
+        PDF_RENDER_DPI,
+    )
+    min_dpi = _clamp_int(
+        overrides.get("pdf_min_dpi"),
+        PDF_MIN_DPI_MIN,
+        PDF_MIN_DPI_MAX,
+        PDF_MIN_DPI,
+    )
+    if min_dpi > render_dpi:
+        min_dpi = render_dpi
+    max_pixels = _clamp_int(
+        overrides.get("max_image_pixels"),
+        MAX_IMAGE_PIXELS_MIN,
+        MAX_IMAGE_PIXELS_MAX,
+        MAX_IMAGE_PIXELS,
+    )
+    batch_size = _clamp_int(
+        overrides.get("inference_batch_size"),
+        OMR_INFERENCE_BATCH_SIZE_MIN,
+        OMR_INFERENCE_BATCH_SIZE_MAX,
+        _select_omr_batch_size(),
+    )
+    return {
+        "preset": overrides.get("preset"),
+        "pdf_render_dpi": render_dpi,
+        "pdf_min_dpi": min_dpi,
+        "max_image_pixels": max_pixels,
+        "inference_batch_size": batch_size,
+    }
+
+
 def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-def process_sheet_upload(file: UploadFile, request: Request) -> StreamingResponse:
+def process_sheet_upload(
+    file: UploadFile,
+    request: Request,
+    settings: dict | None = None,
+) -> StreamingResponse:
     content_type = file.content_type
     filename = file.filename or "sheet.png"
 
@@ -237,6 +295,8 @@ def process_sheet_upload(file: UploadFile, request: Request) -> StreamingRespons
     result: dict = {"notes": None, "error": None, "cancelled": False}
     cancel_event = threading.Event()
 
+    resolved_settings = _resolve_settings(settings)
+
     def _run_oemer() -> None:
         old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout = TeeWriter(old_stdout, log_queue)  # type: ignore[assignment]
@@ -250,7 +310,7 @@ def process_sheet_upload(file: UploadFile, request: Request) -> StreamingRespons
         try:
             from oemer.ete import clear_data, extract
 
-            patch_oemer_batch_size()
+            patch_oemer_batch_size(resolved_settings["inference_batch_size"])
 
             if cancel_event.is_set():
                 raise OMRCancelled()
@@ -260,11 +320,18 @@ def process_sheet_upload(file: UploadFile, request: Request) -> StreamingRespons
                 log_queue.put("Converting PDF pages to images...")
                 pages_dir = tmp_dir / "pages"
                 pages_dir.mkdir()
-                image_paths = _pdf_to_images(input_path, pages_dir)
+                image_paths = _pdf_to_images(
+                    input_path,
+                    pages_dir,
+                    resolved_settings["pdf_render_dpi"],
+                    resolved_settings["pdf_min_dpi"],
+                    resolved_settings["max_image_pixels"],
+                )
                 log_queue.put(f"PDF has {len(image_paths)} page(s)")
                 log_queue.put(
                     f"Rendered PDF pages in {time.perf_counter() - started_conversion:.1f}s "
-                    f"(base DPI={PDF_RENDER_DPI}, min DPI={PDF_MIN_DPI})"
+                    f"(base DPI={resolved_settings['pdf_render_dpi']}, "
+                    f"min DPI={resolved_settings['pdf_min_dpi']})"
                 )
                 skip_deskew = True
             else:
@@ -279,15 +346,18 @@ def process_sheet_upload(file: UploadFile, request: Request) -> StreamingRespons
             for path in image_paths:
                 if cancel_event.is_set():
                     raise OMRCancelled()
-                _downscale_image_if_needed(path)
+                _downscale_image_if_needed(path, resolved_settings["max_image_pixels"])
 
             provider_line = ", ".join(get_onnx_providers()) or "unknown"
             log_queue.put(f"ONNX providers: {provider_line}")
             if "CUDAExecutionProvider" in get_onnx_providers():
-                log_queue.put(f"Using CUDA batch size {OMR_GPU_BATCH_SIZE}")
+                log_queue.put(
+                    f"Using CUDA batch size {resolved_settings['inference_batch_size']}"
+                )
             else:
                 log_queue.put(
-                    f"Using CPU batch size {OMR_CPU_BATCH_SIZE} to avoid RAM thrashing"
+                    "Using CPU batch size "
+                    f"{resolved_settings['inference_batch_size']} to avoid RAM thrashing"
                 )
 
             with _oemer_lock:

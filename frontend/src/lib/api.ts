@@ -1,4 +1,10 @@
-import type { NoteData, SSEEvent, Sheet, SheetDetail } from './types';
+import type {
+  NoteData,
+  ProcessingSettings,
+  SSEEvent,
+  Sheet,
+  SheetDetail,
+} from './types';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
@@ -10,9 +16,20 @@ export async function processSheetWithProgress(
   file: File,
   onEvent: (event: SSEEvent) => void,
   signal?: AbortSignal,
+  settings?: ProcessingSettings,
 ): Promise<{ notes: NoteData[]; sheetId: number }> {
   const formData = new FormData();
   formData.append('file', file);
+  if (settings) {
+    formData.append('preset', settings.preset);
+    formData.append('pdf_render_dpi', String(settings.pdfRenderDpi));
+    formData.append('pdf_min_dpi', String(settings.pdfMinDpi));
+    formData.append('max_image_pixels', String(settings.maxImagePixels));
+    formData.append(
+      'inference_batch_size',
+      String(settings.inferenceBatchSize),
+    );
+  }
 
   const res = await fetch(`${API_BASE}/process-sheet`, {
     method: 'POST',

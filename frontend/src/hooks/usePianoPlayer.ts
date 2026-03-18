@@ -1,6 +1,6 @@
 import type { NoteData, PlaybackState } from '@/lib/types';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT } from '@/lib/types';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ElectricPiano,
   Mellotron,
@@ -126,7 +126,14 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const speedRef = useRef(1);
   const scheduledRef = useRef<Set<number>>(new Set());
   const stateRef = useRef<PlaybackState>('idle');
-  const notesRef = useRef(notes);
+  const sortedNotes = useMemo(() => {
+    return notes.slice().sort((a, b) => a.start - b.start);
+  }, [notes]);
+  const endTimes = useMemo(() => {
+    return new Float64Array(sortedNotes.map(n => n.start + n.duration));
+  }, [sortedNotes]);
+  const sortedNotesRef = useRef(sortedNotes);
+  const endTimesRef = useRef(endTimes);
   const instrumentRef = useRef(instrument);
   const volumeRef = useRef(volume);
   const reverbMixRef = useRef(reverbMix);
@@ -141,7 +148,8 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
   const duetVolumeRef = useRef(duetVolume);
   const duetOctaveRef = useRef(duetOctave);
 
-  notesRef.current = notes;
+  sortedNotesRef.current = sortedNotes;
+  endTimesRef.current = endTimes;
   instrumentRef.current = instrument;
   duetEnabledRef.current = duetEnabled;
   duetInstrumentRef.current = duetInstrument;
@@ -279,50 +287,63 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
     const inst = instRef.current;
     const duetInst = duetInstRef.current;
     const ctx = ctxRef.current;
-    const currentNotes = notesRef.current;
-    if (inst && ctx) {
-      for (let i = 0; i < currentNotes.length; i++) {
-        if (scheduledRef.current.has(i)) continue;
+    const currentNotes = sortedNotesRef.current;
+    const ends = endTimesRef.current;
+    if (inst && ctx && currentNotes.length > 0) {
+      const windowStart = t - 0.5;
+      const windowEnd = t + LOOK_AHEAD_S;
+
+      let lo = 0;
+      let hi = ends.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (ends[mid] < windowStart) lo = mid + 1;
+        else hi = mid;
+      }
+
+      for (let i = lo; i < currentNotes.length; i++) {
         const note = currentNotes[i];
-        if (note.start <= t + LOOK_AHEAD_S && note.start + note.duration >= t) {
-          scheduledRef.current.add(i);
-          const delay = Math.max(0, (note.start - t) / speedRef.current);
-          let acTime = ctx.currentTime + delay;
-          let velocity = 80;
-          let detune = 0;
+        if (note.start > windowEnd) break;
+        if (scheduledRef.current.has(i)) continue;
+        if (note.start + note.duration < t) continue;
+        scheduledRef.current.add(i);
 
-          if (humanizeRef.current) {
-            velocity += Math.round((Math.random() - 0.5) * 20);
-            velocity = Math.max(1, Math.min(127, velocity));
-            acTime += (Math.random() - 0.5) * 0.03;
-            detune = (Math.random() - 0.5) * 10;
-          }
+        const delay = Math.max(0, (note.start - t) / speedRef.current);
+        let acTime = ctx.currentTime + delay;
+        let velocity = 80;
+        let detune = 0;
 
-          const mainPitch =
-            note.pitch + octaveRef.current * 12 + transposeRef.current;
-          if (mainPitch >= 21 && mainPitch <= 108) {
-            inst.start({
-              note: mainPitch,
-              velocity,
+        if (humanizeRef.current) {
+          velocity += Math.round((Math.random() - 0.5) * 20);
+          velocity = Math.max(1, Math.min(127, velocity));
+          acTime += (Math.random() - 0.5) * 0.03;
+          detune = (Math.random() - 0.5) * 10;
+        }
+
+        const mainPitch =
+          note.pitch + octaveRef.current * 12 + transposeRef.current;
+        if (mainPitch >= 21 && mainPitch <= 108) {
+          inst.start({
+            note: mainPitch,
+            velocity,
+            time: acTime,
+            duration: note.duration / speedRef.current,
+            detune,
+          });
+        }
+
+        // Duet: play the same note shifted by octave
+        if (duetEnabledRef.current && duetInst) {
+          const duetPitch =
+            note.pitch + duetOctaveRef.current * 12 + transposeRef.current;
+          if (duetPitch >= 21 && duetPitch <= 108) {
+            duetInst.start({
+              note: duetPitch,
+              velocity: Math.max(1, Math.min(127, velocity - 10)),
               time: acTime,
               duration: note.duration / speedRef.current,
               detune,
             });
-          }
-
-          // Duet: play the same note shifted by octave
-          if (duetEnabledRef.current && duetInst) {
-            const duetPitch =
-              note.pitch + duetOctaveRef.current * 12 + transposeRef.current;
-            if (duetPitch >= 21 && duetPitch <= 108) {
-              duetInst.start({
-                note: duetPitch,
-                velocity: Math.max(1, Math.min(127, velocity - 10)),
-                time: acTime,
-                duration: note.duration / speedRef.current,
-                detune,
-              });
-            }
           }
         }
       }
@@ -397,6 +418,10 @@ export function usePianoPlayer(notes: NoteData[]): UsePianoPlayerReturn {
       startWallRef.current = performance.now();
     }
   }, []);
+
+  useEffect(() => {
+    scheduledRef.current.clear();
+  }, [sortedNotes]);
 
   const setSpeed = useCallback((s: number) => {
     if (stateRef.current === 'playing') {

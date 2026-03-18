@@ -1,4 +1,8 @@
-import { ControlSidebar, TransportOverlay } from '@/components/ControlBar';
+import {
+  ControlSidebar,
+  TransportDocked,
+  TransportOverlay,
+} from '@/components/ControlBar';
 import { PianoRollGL } from '@/components/PianoRollGL';
 import { Button } from '@/components/ui/button';
 import { usePianoPlayer } from '@/hooks/usePianoPlayer';
@@ -6,12 +10,18 @@ import { fetchSheet } from '@/lib/api';
 import type { ColorScheme } from '@/lib/colors';
 import { DEFAULT_COLOR_SCHEME } from '@/lib/colors';
 import type { NoteData, WebGLHitEffect } from '@/lib/types';
-import { Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router';
+import { ChevronLeft, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useOutletContext, useParams } from 'react-router';
 
 export function PlayerPage() {
+  const { setNowPlayingTitle, registerStopPlayback } = useOutletContext<{
+    nowPlayingTitle: string;
+    setNowPlayingTitle: (title: string) => void;
+    registerStopPlayback: (fn: (() => void) | null) => void;
+  }>();
   const { sheetId } = useParams<{ sheetId: string }>();
+  const location = useLocation();
   const [notes, setNotes] = useState<NoteData[]>([]);
   const [sheetName, setSheetName] = useState<string>('');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -29,6 +39,10 @@ export function PlayerPage() {
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Transport mode
+  const [transportDocked, setTransportDocked] = useState(true);
+  const resumeAfterSeekRef = useRef(false);
 
   useEffect(() => {
     if (!sheetId) return;
@@ -56,7 +70,33 @@ export function PlayerPage() {
     };
   }, [sheetId]);
 
+  useEffect(() => {
+    setNowPlayingTitle(sheetName || '');
+    return () => setNowPlayingTitle('');
+  }, [setNowPlayingTitle, sheetName]);
+
   const player = usePianoPlayer(notes);
+  const { stop } = player;
+
+  const prevPathRef = useRef(location.pathname);
+
+  useEffect(() => {
+    if (prevPathRef.current !== location.pathname) {
+      stop();
+      prevPathRef.current = location.pathname;
+    }
+  }, [location.pathname, stop]);
+
+  useEffect(() => {
+    return () => {
+      stop();
+    };
+  }, [stop]);
+
+  useEffect(() => {
+    registerStopPlayback(stop);
+    return () => registerStopPlayback(null);
+  }, [registerStopPlayback, stop]);
 
   const handleColorSchemeChange = useCallback((s: ColorScheme) => {
     setColorScheme(s);
@@ -78,6 +118,22 @@ export function PlayerPage() {
     setShowKeyDividers(v);
   }, []);
 
+  const handleSeekStart = useCallback(() => {
+    if (player.playbackState === 'playing') {
+      resumeAfterSeekRef.current = true;
+      player.pause();
+    } else {
+      resumeAfterSeekRef.current = false;
+    }
+  }, [player]);
+
+  const handleSeekEnd = useCallback(() => {
+    if (resumeAfterSeekRef.current) {
+      player.play();
+    }
+    resumeAfterSeekRef.current = false;
+  }, [player]);
+
   if (loadingSheet) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -95,28 +151,21 @@ export function PlayerPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden relative">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
       {/* Main area: PianoRoll + floating transport */}
-      <div className="flex-1 flex flex-col min-w-0 relative">
-        {/* Sheet title */}
-        {sheetName && (
-          <div className="absolute top-3 left-4 z-30">
-            <span className="text-xs font-medium text-white/50 bg-[#141735]/90 backdrop-blur-sm border border-white/10 px-3 py-1 rounded-md">
-              {sheetName}
-            </span>
-          </div>
-        )}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
+        {/* Sheet title moved to navbar */}
 
         {/* Settings button — visible when sidebar is closed */}
         {!sidebarOpen && (
-          <div className="absolute top-3 right-4 z-10">
+          <div className="absolute top-3 right-4 z-20">
             <Button
               variant="ghost"
               size="icon"
-              className="h-16 w-16 cursor-pointer scale-75 text-white/40 hover:text-white/70 hover:bg-white/[0.08] bg-[#141735]/90 backdrop-blur-sm border border-white/10 rounded-md"
+              className="cursor-pointer  text-white/80 hover:text-white/90 hover:bg-white/8 bg-[#141735]/90 backdrop-blur-sm border border-white/10 rounded-md"
               onClick={() => setSidebarOpen(true)}
             >
-              <img src="/genie_logo.png" alt="Settings" className="h-12 w-12" />
+              <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         )}
@@ -139,7 +188,29 @@ export function PlayerPage() {
         </div>
 
         {/* Floating transport */}
-        <TransportOverlay
+        {!transportDocked && (
+          <TransportOverlay
+            playbackState={player.playbackState}
+            loading={player.loading}
+            duetLoading={player.duetLoading}
+            speed={player.speed}
+            currentTime={player.currentTime}
+            duration={player.duration}
+            onPlay={player.play}
+            onPause={player.pause}
+            onStop={player.stop}
+            onSpeedChange={player.setSpeed}
+            onSeek={player.seek}
+            onSeekStart={handleSeekStart}
+            onSeekEnd={handleSeekEnd}
+            onToggleDock={() => setTransportDocked(true)}
+          />
+        )}
+      </div>
+
+      {/* Docked transport (under keyboard) */}
+      {transportDocked && (
+        <TransportDocked
           playbackState={player.playbackState}
           loading={player.loading}
           duetLoading={player.duetLoading}
@@ -151,8 +222,11 @@ export function PlayerPage() {
           onStop={player.stop}
           onSpeedChange={player.setSpeed}
           onSeek={player.seek}
+          onSeekStart={handleSeekStart}
+          onSeekEnd={handleSeekEnd}
+          onToggleDock={() => setTransportDocked(false)}
         />
-      </div>
+      )}
 
       {/* Right sidebar — absolutely positioned, overlays canvas */}
       <ControlSidebar

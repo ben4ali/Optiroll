@@ -4,6 +4,16 @@ export interface NoteData {
   duration: number;
 }
 
+export type ProcessingPreset = 'fast' | 'balanced' | 'accuracy';
+
+export interface ProcessingSettings {
+  preset: ProcessingPreset;
+  pdfRenderDpi: number;
+  pdfMinDpi: number;
+  maxImagePixels: number;
+  inferenceBatchSize: number;
+}
+
 export type PlaybackState = 'idle' | 'playing' | 'paused';
 
 export type InstrumentType =

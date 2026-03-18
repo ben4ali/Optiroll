@@ -19,6 +19,8 @@ export function ProcessingWidget() {
     logs,
     resultSheetId,
     error,
+    previewUrl,
+    previewType,
     cancel,
     dismiss,
   } = useProcessing();
@@ -53,7 +55,9 @@ export function ProcessingWidget() {
         )}
 
         {status === 'processing' && (
-          <span className="text-xs text-white/70 tabular-nums">{progress}%</span>
+          <span className="text-xs text-white/70 tabular-nums">
+            {progress}%
+          </span>
         )}
         {status === 'done' && (
           <span className="text-xs text-emerald-400">Done</span>
@@ -72,6 +76,20 @@ export function ProcessingWidget() {
     <div className="fixed bottom-4 right-4 z-50 w-80 rounded-xl bg-[#181b2e] border border-white/10 shadow-2xl shadow-black/50 backdrop-blur-sm">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3">
+        {previewUrl && (
+          <div className="relative h-12 w-10 overflow-hidden rounded-md border border-white/10 bg-[#0c0e1f]">
+            <img
+              src={previewUrl}
+              alt="Processing preview"
+              className={`h-full w-full object-cover ${status === 'processing' ? 'blur-[1px]' : ''}`}
+            />
+            {status === 'processing' && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-[10px] text-white/80">
+                {progress}%
+              </div>
+            )}
+          </div>
+        )}
         {status === 'processing' && (
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-white" />
         )}
